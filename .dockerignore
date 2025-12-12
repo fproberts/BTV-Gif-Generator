@@ -1,0 +1,10 @@
+node_modules
+.next
+.git
+.DS_Store
+# Don't copy local database or uploads, we want the server to start fresh 
+# and mount volumes for these paths instead.
+data/db.json
+public/uploads/*
+# Keep the folder structure though, just ignore the content
+!public/uploads/.keep

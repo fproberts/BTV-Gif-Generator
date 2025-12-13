@@ -29,6 +29,10 @@ RUN npm run build
 # Expose port (Railway often uses 8080)
 EXPOSE 8080
 ENV PORT=8080
+ENV STORAGE_PATH=/app/persistent
 
-# Start command: Use 'cp -rn' to copy backup data to volumes WITHOUT overwriting existing files
-CMD ["sh", "-c", "echo 'Checking for data migration...' && cp -rn /migration/data/* /app/data/ || true && cp -rn /migration/uploads/* /app/public/uploads/ || true && npm start"]
+# Start command:
+# 1. Create persistent dirs
+# 2. Copy migration data -> persistent dirs (no overwrite)
+# 3. Start app
+CMD ["sh", "-c", "mkdir -p /app/persistent/data && mkdir -p /app/persistent/uploads && echo 'Migrating data...' && cp -rn /migration/data/* /app/persistent/data/ || true && cp -rn /migration/uploads/* /app/persistent/uploads/ || true && npm start"]

@@ -14,8 +14,13 @@ export async function GET(
         return new NextResponse('Invalid filename', { status: 400 });
     }
 
-    // Look for the file in public/uploads
-    const filePath = path.join(process.cwd(), 'public', 'uploads', filename);
+    // Look for the file in the correct uploads directory
+    // Logic must match app/actions.ts
+    const UPLOADS_DIR = process.env.STORAGE_PATH
+        ? path.join(process.env.STORAGE_PATH, 'uploads')
+        : path.join(process.cwd(), 'public', 'uploads');
+
+    const filePath = path.join(UPLOADS_DIR, filename);
 
     try {
         const fileBuffer = await fs.readFile(filePath);

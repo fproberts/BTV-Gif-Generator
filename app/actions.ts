@@ -6,9 +6,30 @@ import { generateGif } from '@/lib/gifGenerator';
 import { revalidatePath } from 'next/cache';
 
 // Constants
-const DATA_DIR = path.join(process.cwd(), 'data');
+// Constants
+// If STORAGE_PATH is set (e.g. /app/persistent in Docker), we use that root.
+// Otherwise we default to the local project structure.
+const BASE_PATH = process.env.STORAGE_PATH || process.cwd();
+
+// If we are in Docker (STORAGE_PATH is set), we might need to append 'data' and 'uploads' explicitly
+// dependent on if we want them nested.
+// Local:
+//   DATA_DIR = ./data
+//   UPLOADS_DIR = ./public/uploads
+//
+// Docker (STORAGE_PATH=/app/persistent):
+//   DATA_DIR = /app/persistent/data
+//   UPLOADS_DIR = /app/persistent/uploads
+
+const DATA_DIR = process.env.STORAGE_PATH
+    ? path.join(process.env.STORAGE_PATH, 'data')
+    : path.join(process.cwd(), 'data');
+
+const UPLOADS_DIR = process.env.STORAGE_PATH
+    ? path.join(process.env.STORAGE_PATH, 'uploads')
+    : path.join(process.cwd(), 'public', 'uploads');
+
 const DB_PATH = path.join(DATA_DIR, 'db.json');
-const UPLOADS_DIR = path.join(process.cwd(), 'public', 'uploads');
 
 // Ensure directories exist
 async function ensureDirs() {

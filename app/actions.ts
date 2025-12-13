@@ -175,23 +175,46 @@ export async function updateImageFolder(imageId: string, folderId: string | null
 }
 
 export async function deleteImage(imageId: string) {
+    console.log(`[Delete] Request to delete imageId: ${imageId}`);
     const db = await readDb();
     const index = db.images.findIndex(i => i.id === imageId);
+
     if (index !== -1) {
         const img = db.images[index];
+        console.log(`[Delete] Found image in DB: ${img.filename}`);
+
         // Try delete file
         const filepath = path.join(UPLOADS_DIR, img.filename);
+        console.log(`[Delete] Target filepath: ${filepath}`);
+
         try {
             await fs.unlink(filepath);
+            console.log(`[Delete] Successfully deleted original file`);
+
             if (img.gifUrl) {
                 const gifName = path.basename(img.gifUrl);
-                await fs.unlink(path.join(UPLOADS_DIR, gifName)).catch(() => { });
+                const gifPath = path.join(UPLOADS_DIR, gifName);
+                console.log(`[Delete] Target GIF path: ${gifPath}`);
+                await fs.unlink(gifPath).catch((e) => {
+                    console.error(`[Delete] Failed to delete GIF: ${e.message}`);
+                });
             }
-        } catch (e) { console.error("Failed to delete file", e) }
+        } catch (e: any) {
+            console.error(`[Delete] CRITICAL ERROR removing file:`, e);
+            // If error is ENOENT (file not found), we should probably still remove from DB
+            // But if EACCES (permission), we need to know.
+            if (e.code !== 'ENOENT') {
+                throw e; // Re-throw to cause UI rollback if it's a real error (like permission)
+            } else {
+                console.warn(`[Delete] File passed was not found, removing from DB anyway.`);
+            }
+        }
 
         db.images.splice(index, 1);
         await writeDb(db);
         revalidatePath('/');
+    } else {
+        console.error(`[Delete] Image ID ${imageId} not found in DB`);
     }
 }
 

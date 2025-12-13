@@ -1,4 +1,4 @@
-FROM node:18-alpine
+FROM node:20-alpine
 
 # Install Python 3 and Pillow (Image processing library)
 # py3-pillow is the Alpine package for Pillow, pre-compiled (faster/easier than pip)

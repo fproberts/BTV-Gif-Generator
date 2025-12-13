@@ -131,12 +131,18 @@ export default function Dashboard({ initialData }: DashboardProps) {
 
             case 'delete-image':
                 if (modalData) {
-                    await deleteImage(modalData.id);
-                    setData((prev: any) => ({
-                        ...prev,
-                        images: prev.images.filter((img: any) => img.id !== modalData.id)
-                    }));
-                    router.refresh();
+                    const result = await deleteImage(modalData.id);
+                    if (result && !result.success) {
+                        alert(`Failed to delete: ${result.error}`);
+                        // Force refresh to get back the optimistic update
+                        router.refresh();
+                    } else {
+                        setData((prev: any) => ({
+                            ...prev,
+                            images: prev.images.filter((img: any) => img.id !== modalData.id)
+                        }));
+                        router.refresh();
+                    }
                 }
                 closeModal();
                 break;
@@ -200,8 +206,8 @@ export default function Dashboard({ initialData }: DashboardProps) {
                 <button
                     onClick={() => setActiveFolderId(null)}
                     className={`flex items-center space-x-2 px-6 py-3 rounded-xl transition-all duration-300 ${activeFolderId === null
-                            ? 'bg-gradient-to-r from-primary to-accent shadow-[0_0_20px_rgba(255,0,222,0.4)] scale-105'
-                            : 'glass-panel hover:bg-white/5'
+                        ? 'bg-gradient-to-r from-primary to-accent shadow-[0_0_20px_rgba(255,0,222,0.4)] scale-105'
+                        : 'glass-panel hover:bg-white/5'
                         }`}
                 >
                     <Folder className="w-5 h-5" />
@@ -213,8 +219,8 @@ export default function Dashboard({ initialData }: DashboardProps) {
                         <button
                             onClick={() => setActiveFolderId(folder.id)}
                             className={`flex items-center space-x-2 px-6 py-3 rounded-xl transition-all duration-300 whitespace-nowrap ${isAdmin ? 'pr-10' : ''} ${activeFolderId === folder.id
-                                    ? 'bg-gradient-to-r from-primary to-accent shadow-[0_0_20px_rgba(255,0,222,0.4)] scale-105'
-                                    : 'glass-panel hover:bg-white/5'
+                                ? 'bg-gradient-to-r from-primary to-accent shadow-[0_0_20px_rgba(255,0,222,0.4)] scale-105'
+                                : 'glass-panel hover:bg-white/5'
                                 }`}
                         >
                             <Folder className="w-5 h-5" />

@@ -204,7 +204,8 @@ export async function deleteImage(imageId: string) {
             // If error is ENOENT (file not found), we should probably still remove from DB
             // But if EACCES (permission), we need to know.
             if (e.code !== 'ENOENT') {
-                throw e; // Re-throw to cause UI rollback if it's a real error (like permission)
+                // Return detailed error to UI
+                return { success: false, error: `${e.code}: ${e.message}` };
             } else {
                 console.warn(`[Delete] File passed was not found, removing from DB anyway.`);
             }
@@ -213,8 +214,10 @@ export async function deleteImage(imageId: string) {
         db.images.splice(index, 1);
         await writeDb(db);
         revalidatePath('/');
+        return { success: true };
     } else {
         console.error(`[Delete] Image ID ${imageId} not found in DB`);
+        return { success: false, error: "Image not found in database" };
     }
 }
 

@@ -32,6 +32,7 @@ ENV PORT=8080
 ENV STORAGE_PATH=/app/persistent
 
 # Start command:
-# Run-Once Logic: Only copy migration data if the persistent DB does NOT exist.
-# This ensures that once the site is live (and db.json exists), we never overwrite/restore from the image again.
-CMD ["sh", "-c", "mkdir -p /app/persistent/data && mkdir -p /app/persistent/uploads && if [ ! -f /app/persistent/data/db.json ]; then echo 'First run detected. Migrating data...' && cp -rn /migration/data/* /app/persistent/data/ || true && cp -rn /migration/uploads/* /app/persistent/uploads/ || true; else echo 'Persistent data exists. Skipping migration.'; fi && npm start"]
+# Run-Once Logic Enhanced:
+# 1. Uploads: Always try to copy MISSING files (cp -rn) - Safe for merging.
+# 2. Database: If db.json is MISSING OR EMPTY (created by init), force overwrite with migration data.
+CMD ["sh", "-c", "mkdir -p /app/persistent/data && mkdir -p /app/persistent/uploads && echo 'Migrating...' && cp -rn /migration/uploads/* /app/persistent/uploads/ || true && if [ ! -f /app/persistent/data/db.json ] || [ $(stat -c%s /app/persistent/data/db.json 2>/dev/null || stat -f%z /app/persistent/data/db.json) -lt 100 ]; then echo 'DB missing/empty. Force migrating...' && cp -f /migration/data/db.json /app/persistent/data/db.json; else echo 'Valid DB exists. Skipping core data migration.'; fi && npm start"]

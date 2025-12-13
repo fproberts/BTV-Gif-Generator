@@ -1,6 +1,10 @@
 import { getAppData } from './actions';
 import Dashboard from '@/components/Dashboard';
 
+// Force dynamic rendering to ensure we read from the Runtime Volume (STORAGE_PATH)
+// instead of serving stale Build-Time data.
+export const dynamic = 'force-dynamic';
+
 export default async function Home() {
   const initialData = await getAppData();
 

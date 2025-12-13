@@ -57,14 +57,14 @@ export function ImageCard({ image, folders, onPreview, onAddTag, onDelete }: Ima
         <div className="group relative rounded-2xl overflow-hidden glass-panel hover:shadow-[0_0_30px_rgba(112,0,255,0.2)] transition-all duration-300 flex flex-col h-full">
 
             {/* Helper Actions Overlay (Top Right) */}
-            <div className="absolute top-2 right-2 z-20 flex space-x-2 opacity-0 group-hover:opacity-100 transition-opacity">
+            <div className="absolute top-2 right-2 z-20 flex space-x-2 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
                 <button onClick={handleDelete} className="p-2 rounded-full bg-black/50 hover:bg-red-500/80 backdrop-blur-md text-white transition-colors" title="Delete">
                     <Trash2 className="w-4 h-4" />
                 </button>
             </div>
 
             {/* Move Folder Overlay (Top Left) */}
-            <div className="absolute top-2 left-2 z-20 opacity-0 group-hover:opacity-100 transition-opacity">
+            <div className="absolute top-2 left-2 z-20 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
                 <div className="relative group/select">
                     <div className="absolute inset-y-0 left-0 flex items-center pl-2 pointer-events-none text-white/70">
                         <FolderInput className="w-3 h-3" />

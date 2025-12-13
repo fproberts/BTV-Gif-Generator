@@ -32,7 +32,6 @@ ENV PORT=8080
 ENV STORAGE_PATH=/app/persistent
 
 # Start command:
-# 1. Create persistent dirs
-# 2. Copy migration data -> persistent dirs (no overwrite)
-# 3. Start app
-CMD ["sh", "-c", "mkdir -p /app/persistent/data && mkdir -p /app/persistent/uploads && echo 'Migrating data...' && cp -rn /migration/data/* /app/persistent/data/ || true && cp -rn /migration/uploads/* /app/persistent/uploads/ || true && npm start"]
+# Run-Once Logic: Only copy migration data if the persistent DB does NOT exist.
+# This ensures that once the site is live (and db.json exists), we never overwrite/restore from the image again.
+CMD ["sh", "-c", "mkdir -p /app/persistent/data && mkdir -p /app/persistent/uploads && if [ ! -f /app/persistent/data/db.json ]; then echo 'First run detected. Migrating data...' && cp -rn /migration/data/* /app/persistent/data/ || true && cp -rn /migration/uploads/* /app/persistent/uploads/ || true; else echo 'Persistent data exists. Skipping migration.'; fi && npm start"]

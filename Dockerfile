@@ -35,4 +35,9 @@ ENV STORAGE_PATH=/app/persistent
 # Run-Once Logic Enhanced:
 # 1. Uploads: Always try to copy MISSING files (cp -rn) - Safe for merging.
 # 2. Database: If db.json is MISSING OR EMPTY (created by init), force overwrite with migration data.
-CMD ["sh", "-c", "mkdir -p /app/persistent/data && mkdir -p /app/persistent/uploads && echo 'Migrating...' && cp -rn /migration/uploads/* /app/persistent/uploads/ || true && if [ ! -f /app/persistent/data/db.json ] || [ $(stat -c%s /app/persistent/data/db.json 2>/dev/null || stat -f%z /app/persistent/data/db.json) -lt 100 ]; then echo 'DB missing/empty. Force migrating...' && cp -f /migration/data/db.json /app/persistent/data/db.json; else echo 'Valid DB exists. Skipping core data migration.'; fi && npm start"]
+# Start command:
+# Run-Once Logic Enhanced:
+# 1. Uploads: Always try to copy MISSING files (cp -rn) - Safe for merging.
+# 2. Database: If db.json is MISSING OR EMPTY (created by init), force overwrite with migration data.
+# 3. Permissions: Force everything in persistent storage to be writable (chmod -R 777).
+CMD ["sh", "-c", "mkdir -p /app/persistent/data && mkdir -p /app/persistent/uploads && echo 'Migrating...' && cp -rn /migration/uploads/* /app/persistent/uploads/ || true && if [ ! -f /app/persistent/data/db.json ] || [ $(stat -c%s /app/persistent/data/db.json 2>/dev/null || stat -f%z /app/persistent/data/db.json) -lt 100 ]; then echo 'DB missing/empty. Force migrating...' && cp -f /migration/data/db.json /app/persistent/data/db.json; else echo 'Valid DB exists. Skipping core data migration.'; fi && chmod -R 777 /app/persistent && npm start"]

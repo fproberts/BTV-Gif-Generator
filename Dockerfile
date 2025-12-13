@@ -26,8 +26,9 @@ RUN cp -r /app/public/uploads/* /migration/uploads/ || true
 ENV NEXT_TELEMETRY_DISABLED 1
 RUN npm run build
 
-# Expose port
-EXPOSE 3000
+# Expose port (Railway often uses 8080)
+EXPOSE 8080
+ENV PORT=8080
 
 # Start command: Use 'cp -rn' to copy backup data to volumes WITHOUT overwriting existing files
 CMD ["sh", "-c", "echo 'Checking for data migration...' && cp -rn /migration/data/* /app/data/ || true && cp -rn /migration/uploads/* /app/public/uploads/ || true && npm start"]

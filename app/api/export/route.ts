@@ -2,7 +2,18 @@ import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
 import archiver from 'archiver';
-import { Readable } from 'stream';
+
+// Helper to convert Node stream to Web Stream
+function nodeToWeb(nodeStream: ReadableStream<Uint8Array> | NodeJS.ReadableStream) {
+    const iterator = (nodeStream as NodeJS.ReadableStream)[Symbol.asyncIterator]();
+    return new ReadableStream({
+        async pull(controller) {
+            const { value, done } = await iterator.next();
+            if (done) controller.close();
+            else controller.enqueue(value);
+        },
+    });
+}
 
 // --- Reused Path Logic from actions.ts ---
 const BASE_PATH = process.env.STORAGE_PATH || process.cwd();
@@ -24,6 +35,7 @@ export async function POST(req: NextRequest) {
         const { folderIds = [], tags = [], includeAll = false } = body;
 
         // 1. Read Database
+        // ... (existing DB read logic seems fine, relying on file system sync read for DB is ok for now)
         if (!fs.existsSync(DB_PATH)) {
             return new NextResponse('Database not found', { status: 404 });
         }
@@ -76,23 +88,32 @@ export async function POST(req: NextRequest) {
             });
         }
 
-        // 3. Create ZIP Stream
-        const archive = archiver('zip', {
-            zlib: { level: 9 } // Compression level
-        });
+        // 3. Create ZIP
+        // Use Archiver
+        const archive = archiver('zip', { zlib: { level: 9 } });
 
-        // Pipe archive to a pass-through stream to send as response
-        const stream = new Readable().wrap(archive);
+        // Trap errors inside the archive stream to avoid silent failures
+        archive.on('error', (err) => {
+            console.error('Archiver Error:', err);
+            // We can't really change the response status once headers are sent,
+            // but we can log it.
+        });
 
         // Add files
         filesToZip.forEach(file => {
             archive.file(file.path, { name: file.name });
         });
 
+        // We must finalize properly *after* setting up the download,
+        // but `archive` is a stream that pushes data when we wrap it.
+        // Important: finalize() is async-ish, it signals end of input.
         archive.finalize();
 
-        // 4. Return Response
-        return new NextResponse(stream as any, {
+        // 4. Return Response with Web Stream
+        // Convert the Node stream (archive) to a Web ReadableStream
+        const stream = nodeToWeb(archive);
+
+        return new NextResponse(stream, {
             headers: {
                 'Content-Type': 'application/zip',
                 'Content-Disposition': `attachment; filename="gifs_export_${Date.now()}.zip"`

@@ -12,7 +12,7 @@ type DashboardProps = {
     initialData: any;
 };
 
-type ModalType = 'admin-auth' | 'create-folder' | 'add-tag' | 'delete-folder' | 'delete-image' | 'preview' | null;
+type ModalType = 'admin-auth' | 'create-folder' | 'add-tag' | 'delete-folder' | 'delete-image' | 'preview' | 'export-settings' | null;
 
 export default function Dashboard({ initialData }: DashboardProps) {
     const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
@@ -20,6 +20,14 @@ export default function Dashboard({ initialData }: DashboardProps) {
     const [isAdmin, setIsAdmin] = useState(false);
     const [titleClicks, setTitleClicks] = useState(0);
     const [selectedTag, setSelectedTag] = useState<string | null>(null);
+
+    // Export State
+    const [exportFilters, setExportFilters] = useState({
+        folderIds: [] as string[],
+        tags: [] as string[],
+        includeAll: true
+    });
+    const [isExporting, setIsExporting] = useState(false);
 
     // Modal State Central
     const [activeModal, setActiveModal] = useState<ModalType>(null);
@@ -173,6 +181,41 @@ export default function Dashboard({ initialData }: DashboardProps) {
         router.refresh();
     };
 
+    const handleExport = async () => {
+        setIsExporting(true);
+        try {
+            const response = await fetch('/api/export', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(exportFilters)
+            });
+
+            if (!response.ok) {
+                const err = await response.json();
+                alert(`Export failed: ${err.error || 'Unknown Error'}`);
+                return;
+            }
+
+            // Trigger Download
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `gifs_export_${Date.now()}.zip`; // Suggest filename
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+
+            closeModal();
+        } catch (error) {
+            console.error(error);
+            alert("Failed to export GIFs.");
+        } finally {
+            setIsExporting(false);
+        }
+    };
+
     // Effect to clear selected tag if it no longer exists in current view? 
     // Optional, but good UX.
     useEffect(() => {
@@ -199,6 +242,13 @@ export default function Dashboard({ initialData }: DashboardProps) {
                         <span>ADMIN MODE</span>
                     </div>
                 )}
+                <button
+                    onClick={() => openModal('export-settings')}
+                    className="p-3 rounded-full glass-panel hover:bg-white/10 text-white/70 hover:text-white transition-colors ml-4"
+                    title="Export GIFs"
+                >
+                    <Download className="w-5 h-5" />
+                </button>
             </header>
 
             {/* Folders Bar */}
@@ -312,11 +362,95 @@ export default function Dashboard({ initialData }: DashboardProps) {
                             activeModal === 'add-tag' ? "Add Tag" :
                                 activeModal === 'delete-folder' ? "Delete Folder" :
                                     activeModal === 'delete-image' ? "Delete Image" :
-                                        activeModal === 'preview' ? (modalData?.name || "Preview") : ""
+                                        activeModal === 'preview' ? (modalData?.name || "Preview") :
+                                            activeModal === 'export-settings' ? "Export GIFs" : ""
                 }
                 maxWidth={activeModal === 'preview' ? 'max-w-5xl' : 'max-w-md'}
             >
-                {activeModal === 'preview' ? (
+                {activeModal === 'export-settings' ? (
+                    // --- Export Modal ---
+                    <div className="space-y-6">
+                        <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-2 custom-scrollbar">
+                            {/* Toggle All */}
+                            <label className="flex items-center space-x-3 p-3 rounded-lg bg-white/5 hover:bg-white/10 cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={exportFilters.includeAll}
+                                    onChange={(e) => setExportFilters(prev => ({ ...prev, includeAll: e.target.checked }))}
+                                    className="w-5 h-5 rounded border-white/20 bg-black/50 text-primary focus:ring-primary"
+                                />
+                                <span className="font-bold text-white">Export Everything</span>
+                            </label>
+
+                            {!exportFilters.includeAll && (
+                                <>
+                                    {/* Folders */}
+                                    <div>
+                                        <h4 className="text-xs font-bold text-white/50 uppercase tracking-wider mb-2">Folders</h4>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            {data.folders.map((f: any) => (
+                                                <label key={f.id} className="flex items-center space-x-2 p-2 rounded bg-black/30 hover:bg-white/5 cursor-pointer">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={exportFilters.folderIds.includes(f.id)}
+                                                        onChange={(e) => {
+                                                            const checked = e.target.checked;
+                                                            setExportFilters(prev => ({
+                                                                ...prev,
+                                                                folderIds: checked
+                                                                    ? [...prev.folderIds, f.id]
+                                                                    : prev.folderIds.filter(id => id !== f.id)
+                                                            }));
+                                                        }}
+                                                        className="rounded border-white/20 bg-black text-primary"
+                                                    />
+                                                    <span className="text-sm truncate">{f.name}</span>
+                                                </label>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    {/* Tags */}
+                                    {uniqueTags.length > 0 && (
+                                        <div>
+                                            <h4 className="text-xs font-bold text-white/50 uppercase tracking-wider mb-2">Filter by Tag</h4>
+                                            <div className="flex flex-wrap gap-2">
+                                                {uniqueTags.map(tag => (
+                                                    <label key={tag} className={`px-2 py-1 rounded text-xs font-bold cursor-pointer transition-colors border border-white/10 ${exportFilters.tags.includes(tag) ? 'bg-primary text-white' : 'bg-black/50 text-white/50 hover:bg-white/10'}`}>
+                                                        <input
+                                                            type="checkbox"
+                                                            className="hidden"
+                                                            checked={exportFilters.tags.includes(tag)}
+                                                            onChange={(e) => {
+                                                                const checked = e.target.checked;
+                                                                setExportFilters(prev => ({
+                                                                    ...prev,
+                                                                    tags: checked
+                                                                        ? [...prev.tags, tag]
+                                                                        : prev.tags.filter(t => t !== tag)
+                                                                }));
+                                                            }}
+                                                        />
+                                                        {tag}
+                                                    </label>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                </>
+                            )}
+                        </div>
+
+                        <button
+                            onClick={handleExport}
+                            disabled={isExporting}
+                            className="w-full py-3 rounded-xl bg-secondary text-black font-bold hover:bg-secondary/80 transition-colors shadow-lg flex items-center justify-center space-x-2 disabled:opacity-50"
+                        >
+                            {isExporting ? <div className="animate-spin w-4 h-4 border-2 border-black border-t-transparent rounded-full" /> : <Download className="w-4 h-4" />}
+                            <span>{isExporting ? "Zipping..." : "Download ZIP"}</span>
+                        </button>
+                    </div>
+                ) : activeModal === 'preview' ? (
                     // --- Preview Modal Content ---
                     <div className="flex flex-col items-center">
                         <div className="w-full bg-black/50 rounded-xl overflow-hidden border border-white/10 mb-6 flex items-center justify-center min-h-[50vh]">

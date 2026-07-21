@@ -33,12 +33,17 @@
         .status.disconnected { background: #3f3f46; color: #a1a1aa; }
         .status.connected { background: rgba(16, 185, 129, 0.2); color: var(--emerald); border: 1px solid var(--emerald); }
         canvas { width: 100%; height: 32px; background: #000; image-rendering: pixelated; border-radius: 4px; margin-bottom: 1rem; }
+        .note { font-size: 0.75rem; color: #a1a1aa; background: #18181b; border-left: 3px solid var(--primary); padding: 0.5rem 0.75rem; margin-bottom: 1rem; border-radius: 0 0.5rem 0.5rem 0; }
     </style>
 </head>
 <body>
 
     <h1>⚡ iPixel Offline BLE</h1>
-    <p class="subtitle">Direct Phone-to-Screen Bluetooth Control (No Internet Required)</p>
+    <p class="subtitle">Direct Phone-to-Screen Bluetooth Control</p>
+
+    <div class="note">
+        💡 <b>iOS Notice</b>: Apple Safari/Chrome disable Web Bluetooth. On iPhone/iPad, open this page in the free <b>Bluefy</b> or <b>WebBLE</b> browser app. On Android/Mac/PC, use Chrome/Edge natively!
+    </div>
 
     <div id="status" class="status disconnected">Status: Disconnected</div>
 
@@ -103,6 +108,10 @@ function crc32(bytes) {
 
 // ─── BLE Connection ───────────────────────────────────────────────────
 document.getElementById("btnConnect").addEventListener("click", async () => {
+    if (!navigator.bluetooth) {
+        return alert("Web Bluetooth is not supported in this browser!\n\n- iOS (iPhone): Download 'Bluefy' from App Store.\n- Android/Mac: Use Chrome/Edge over HTTPS.");
+    }
+
     try {
         updateStatus("Scanning for BLE...");
         device = await navigator.bluetooth.requestDevice({
@@ -113,7 +122,6 @@ document.getElementById("btnConnect").addEventListener("click", async () => {
         updateStatus("Connecting GATT...");
         const server = await device.gatt.connect();
 
-        // Get Service
         let service;
         try {
             service = await server.getPrimaryService(SERVICE_UUID);
@@ -135,13 +143,18 @@ document.getElementById("btnConnect").addEventListener("click", async () => {
     }
 });
 
-// ─── Low Level Send ───────────────────────────────────────────────────
+// ─── Low Level Chunked Send with BLE Delay ────────────────────────────
 async function sendRawCommand(bytes) {
     if (!writeChar) return alert("Please connect to BLE display first!");
     const CHUNK = 244;
     for (let i = 0; i < bytes.length; i += CHUNK) {
         const chunk = bytes.slice(i, i + CHUNK);
-        await writeChar.writeValue(chunk);
+        if (writeChar.writeValueWithResponse) {
+            await writeChar.writeValueWithResponse(chunk);
+        } else {
+            await writeChar.writeValue(chunk);
+        }
+        await new Promise(r => setTimeout(r, 20)); // Inter-chunk BLE delay
     }
 }
 
@@ -154,23 +167,22 @@ async function sendWindowFrames(payloadBytes, isGif = false) {
     const cmdByte = isGif ? 0x03 : 0x02;
     const typeByte = isGif ? 0x02 : 0x00;
 
-    // Build single frame
-    const header = new Uint8Array(12);
+    // Header MUST be 13 bytes: [cmd, 0x00, option] [4 bytes LE size] [4 bytes LE CRC] [typeByte, slot]
+    const header = new Uint8Array(13);
     header[0] = cmdByte;
     header[1] = 0x00;
     header[2] = 0x00; // option
 
-    // Size 4 bytes LE
     new DataView(header.buffer).setUint32(3, totalSize, true);
-    // CRC 4 bytes LE
     new DataView(header.buffer).setUint32(7, crcVal, true);
-    header[11] = 0x00; // slot
+    header[11] = typeByte; // 0x00 for PNG, 0x02 for GIF
+    header[12] = 0x00;     // slot
 
     const frame = new Uint8Array(header.length + totalSize);
     frame.set(header, 0);
     frame.set(payloadBytes, header.length);
 
-    // Add 2 byte LE length prefix
+    // 2-byte LE length prefix
     const prefix = new Uint8Array(2);
     new DataView(prefix.buffer).setUint16(0, frame.length + 2, true);
 
@@ -178,7 +190,7 @@ async function sendWindowFrames(payloadBytes, isGif = false) {
     fullMsg.set(prefix, 0);
     fullMsg.set(frame, prefix.length);
 
-    updateStatus("Streaming to screen...");
+    updateStatus(`Streaming ${isGif ? 'GIF' : 'Image'} (${Math.round(totalSize / 1024)} KB)...`);
     await sendRawCommand(fullMsg);
     updateStatus("Sent successfully!", true);
 }
@@ -199,7 +211,6 @@ function renderTextPNG(text, textColor, bgColor) {
     ctx.textBaseline = "middle";
     ctx.fillText(text, 48, 8);
 
-    // Draw preview
     const prevCtx = document.getElementById("previewCanvas").getContext("2d");
     prevCtx.drawImage(canvas, 0, 0);
 
@@ -213,11 +224,15 @@ function renderTextPNG(text, textColor, bgColor) {
 
 // ─── UI Actions ───────────────────────────────────────────────────────
 document.getElementById("btnSendText").addEventListener("click", async () => {
-    const text = document.getElementById("textInput").value;
-    const textCol = document.getElementById("textColor").value;
-    const bgCol = document.getElementById("bgColor").value;
-    const pngBytes = await renderTextPNG(text, textCol, bgCol);
-    await sendWindowFrames(pngBytes, false);
+    try {
+        const text = document.getElementById("textInput").value;
+        const textCol = document.getElementById("textColor").value;
+        const bgCol = document.getElementById("bgColor").value;
+        const pngBytes = await renderTextPNG(text, textCol, bgCol);
+        await sendWindowFrames(pngBytes, false);
+    } catch (e) {
+        alert("Error sending text: " + e.message);
+    }
 });
 
 document.getElementById("fileInput").addEventListener("change", (e) => {
@@ -227,30 +242,32 @@ document.getElementById("fileInput").addEventListener("change", (e) => {
 });
 
 document.getElementById("btnSendImage").addEventListener("click", async () => {
-    if (!selectedFile) return alert("Select an image or GIF file first!");
-    const isGif = selectedFile.name.toLowerCase().endsWith(".gif");
-    const buf = await selectedFile.arrayBuffer();
-    const bytes = new Uint8Array(buf);
+    try {
+        if (!selectedFile) return alert("Select an image or GIF file first!");
+        const isGif = selectedFile.name.toLowerCase().endsWith(".gif");
+        const buf = await selectedFile.arrayBuffer();
+        const bytes = new Uint8Array(buf);
 
-    if (!isGif) {
-        // Render image onto 96x16 canvas
-        const img = new Image();
-        img.src = URL.createObjectURL(selectedFile);
-        await img.decode();
+        if (!isGif) {
+            const img = new Image();
+            img.src = URL.createObjectURL(selectedFile);
+            await img.decode();
 
-        const canvas = document.createElement("canvas");
-        canvas.width = 96;
-        canvas.height = 16;
-        const ctx = canvas.getContext("2d");
-        ctx.drawImage(img, 0, 0, 96, 16);
+            const canvas = document.createElement("canvas");
+            canvas.width = 96;
+            canvas.height = 16;
+            const ctx = canvas.getContext("2d");
+            ctx.drawImage(img, 0, 0, 96, 16);
 
-        canvas.toBlob(async (blob) => {
-            const pngBuf = await blob.arrayBuffer();
-            await sendWindowFrames(new Uint8Array(pngBuf), false);
-        }, "image/png");
-    } else {
-        // Send raw GIF bytes
-        await sendWindowFrames(bytes, true);
+            canvas.toBlob(async (blob) => {
+                const pngBuf = await blob.arrayBuffer();
+                await sendWindowFrames(new Uint8Array(pngBuf), false);
+            }, "image/png");
+        } else {
+            await sendWindowFrames(bytes, true);
+        }
+    } catch (e) {
+        alert("Error sending image/GIF: " + e.message);
     }
 });
 

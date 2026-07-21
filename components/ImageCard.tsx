@@ -119,24 +119,40 @@ export function ImageCard({ image, folders, onPreview, onAddTag, onDelete }: Ima
                 </div>
 
                 {/* Actions Bar */}
-                <div className="pt-2 flex items-center gap-2 mt-auto">
+                <div className="pt-2 flex flex-col gap-2 mt-auto">
                     {image.gifUrl ? (
                         <>
-                            <a
-                                href={image.gifUrl}
-                                download={`${image.name || 'animation'}.gif`}
-                                className="flex-1 flex items-center justify-center space-x-1 py-2 rounded-lg bg-secondary text-black font-bold hover:bg-secondary/90 transition-colors text-xs"
-                            >
-                                <Download className="w-3 h-3" />
-                                <span>Download</span>
-                            </a>
                             <button
-                                onClick={() => onPreview(image)}
-                                className="flex-1 flex items-center justify-center space-x-1 py-2 rounded-lg font-bold transition-colors text-xs border bg-transparent border-white/20 text-white hover:bg-white/10"
+                                onClick={async () => {
+                                    try {
+                                        const { sendImageToScreenAction } = await import('@/app/actions');
+                                        await sendImageToScreenAction(image.id, true);
+                                        alert("Sent to LED Screen!");
+                                    } catch (e: any) {
+                                        alert("Failed to send: " + e.message);
+                                    }
+                                }}
+                                className="w-full flex items-center justify-center space-x-1 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black font-extrabold transition-colors text-xs"
                             >
-                                <Eye className="w-3 h-3" />
-                                <span>Preview</span>
+                                <span>📺 Send to Screen</span>
                             </button>
+                            <div className="flex gap-2">
+                                <a
+                                    href={image.gifUrl}
+                                    download={`${image.name || 'animation'}.gif`}
+                                    className="flex-1 flex items-center justify-center space-x-1 py-2 rounded-lg bg-secondary text-black font-bold hover:bg-secondary/90 transition-colors text-xs"
+                                >
+                                    <Download className="w-3 h-3" />
+                                    <span>Download</span>
+                                </a>
+                                <button
+                                    onClick={() => onPreview(image)}
+                                    className="flex-1 flex items-center justify-center space-x-1 py-2 rounded-lg font-bold transition-colors text-xs border bg-transparent border-white/20 text-white hover:bg-white/10"
+                                >
+                                    <Eye className="w-3 h-3" />
+                                    <span>Preview</span>
+                                </button>
+                            </div>
                         </>
                     ) : (
                         <button

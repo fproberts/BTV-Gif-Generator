@@ -4,6 +4,7 @@ import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { UploadZone } from './UploadZone';
 import { ImageCard } from './ImageCard';
 import { Modal } from './Modal';
+import { ScreenControlBar } from './ScreenControlBar';
 import { Folder, Plus, X, Lock, Tag as TagIcon, Download, AlertTriangle, Trash2 } from 'lucide-react';
 import { createFolder, uploadImage, deleteFolder, checkAdminPassword, updateImageTags, deleteImage } from '@/app/actions';
 import { useRouter } from 'next/navigation';
@@ -250,6 +251,9 @@ export default function Dashboard({ initialData }: DashboardProps) {
                     <Download className="w-5 h-5" />
                 </button>
             </header>
+
+            {/* Live Screen Control Bar */}
+            <ScreenControlBar />
 
             {/* Folders Bar */}
             <div className="flex space-x-4 overflow-x-auto p-2 pb-4 scrollbar-hide">

@@ -1,0 +1,16 @@
+{
+  "name": "iPixel LED Controller",
+  "short_name": "iPixel LED",
+  "description": "Offline BLE Controller & Scrolling GIF Generator for 96x16 LED Screen",
+  "start_url": "/offline.html",
+  "display": "standalone",
+  "background_color": "#09090b",
+  "theme_color": "#a855f7",
+  "icons": [
+    {
+      "src": "/icon.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    }
+  ]
+}

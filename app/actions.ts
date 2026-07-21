@@ -270,3 +270,28 @@ export async function deleteFolder(folderId: string) {
         revalidatePath('/');
     }
 }
+
+export async function sendImageToScreenAction(imageId: string, useGif = true) {
+    const db = await readDb();
+    const img = db.images.find(i => i.id === imageId);
+    if (!img) throw new Error('Image not found');
+
+    const filename = (useGif && img.gifUrl) ? path.basename(img.gifUrl) : img.filename;
+    const targetPath = path.join(UPLOADS_DIR, filename);
+
+    const { sendFileToScreen } = await import('@/lib/screenClient');
+    await sendFileToScreen(targetPath);
+    return { success: true };
+}
+
+export async function sendTextToScreenAction(text: string, color = '00FF00', bg = '000000') {
+    const { sendTextToScreen } = await import('@/lib/screenClient');
+    await sendTextToScreen(text, color, bg);
+    return { success: true };
+}
+
+export async function setBrightnessAction(level: number) {
+    const { setScreenBrightness } = await import('@/lib/screenClient');
+    await setScreenBrightness(level);
+    return { success: true };
+}

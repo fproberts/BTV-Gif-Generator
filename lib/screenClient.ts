@@ -30,7 +30,7 @@ export async function sendFileToScreen(filePath: string): Promise<string> {
     });
 }
 
-export async function sendTextToScreen(text: str, color = 'ffffff', bg = '000000'): Promise<string> {
+export async function sendTextToScreen(text: string, color = 'ffffff', bg = '000000'): Promise<string> {
     return new Promise((resolve, reject) => {
         console.log(`Sending text to screen: "${text}"`);
 

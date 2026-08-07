@@ -5,7 +5,7 @@ import { UploadZone } from './UploadZone';
 import { ImageCard } from './ImageCard';
 import { Modal } from './Modal';
 import { ScreenControlBar } from './ScreenControlBar';
-import { Folder, Plus, X, Lock, Tag as TagIcon, Download, AlertTriangle, Trash2 } from 'lucide-react';
+import { Folder, Plus, X, Lock, Tag as TagIcon, Download, AlertTriangle, Trash2, Zap } from 'lucide-react';
 import { createFolder, uploadImage, deleteFolder, checkAdminPassword, updateImageTags, deleteImage } from '@/app/actions';
 import { useRouter } from 'next/navigation';
 
@@ -243,13 +243,25 @@ export default function Dashboard({ initialData }: DashboardProps) {
                         <span>ADMIN MODE</span>
                     </div>
                 )}
-                <button
-                    onClick={() => openModal('export-settings')}
-                    className="p-3 rounded-full glass-panel hover:bg-white/10 text-white/70 hover:text-white transition-colors ml-4"
-                    title="Export GIFs"
-                >
-                    <Download className="w-5 h-5" />
-                </button>
+                <div className="flex items-center space-x-3 ml-4">
+                    <a
+                        href="/offline.html"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-4 py-2.5 rounded-full glass-panel hover:bg-white/10 text-amber-300 font-bold text-xs flex items-center space-x-2 transition-all border border-amber-500/30 hover:border-amber-500/60 shadow-lg"
+                        title="Offline PWA Controller"
+                    >
+                        <Zap className="w-4 h-4 text-amber-400" />
+                        <span>Offline App</span>
+                    </a>
+                    <button
+                        onClick={() => openModal('export-settings')}
+                        className="p-3 rounded-full glass-panel hover:bg-white/10 text-white/70 hover:text-white transition-colors"
+                        title="Export GIFs"
+                    >
+                        <Download className="w-5 h-5" />
+                    </button>
+                </div>
             </header>
 
             {/* Live Screen Control Bar */}

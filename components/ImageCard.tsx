@@ -125,9 +125,16 @@ export function ImageCard({ image, folders, onPreview, onAddTag, onDelete }: Ima
                             <button
                                 onClick={async () => {
                                     try {
-                                        const { sendImageToScreenAction } = await import('@/app/actions');
-                                        await sendImageToScreenAction(image.id, true);
-                                        alert("Sent to LED Screen!");
+                                        const { getBLEState, sendUrlBLE } = await import('@/lib/webBluetooth');
+                                        const bleState = getBLEState();
+                                        if (bleState.connected && image.gifUrl) {
+                                            await sendUrlBLE(image.gifUrl, true);
+                                            alert("Sent to LED Screen via Web Bluetooth!");
+                                        } else {
+                                            const { sendImageToScreenAction } = await import('@/app/actions');
+                                            await sendImageToScreenAction(image.id, true);
+                                            alert("Sent to LED Screen!");
+                                        }
                                     } catch (e: any) {
                                         alert("Failed to send: " + e.message);
                                     }

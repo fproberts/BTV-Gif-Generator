@@ -29,9 +29,10 @@
         .btn-primary { background: var(--primary); color: #fff; }
         .btn-emerald { background: var(--emerald); color: #000; }
         .btn-outline { background: transparent; border: 1px solid #3f3f46; color: #fff; }
-        .status { text-align: center; padding: 0.5rem; font-size: 0.85rem; font-weight: bold; border-radius: 0.5rem; margin-bottom: 1rem; }
+        .status { text-align: center; padding: 0.6rem; font-size: 0.85rem; font-weight: bold; border-radius: 0.5rem; margin-bottom: 1rem; transition: all 0.3s; }
         .status.disconnected { background: #3f3f46; color: #a1a1aa; }
         .status.connected { background: rgba(16, 185, 129, 0.2); color: var(--emerald); border: 1px solid var(--emerald); }
+        .status.busy { background: rgba(168, 85, 247, 0.2); color: var(--primary); border: 1px solid var(--primary); }
         canvas { width: 100%; height: 32px; background: #000; image-rendering: pixelated; border-radius: 4px; margin-bottom: 1rem; }
         .note { font-size: 0.75rem; color: #a1a1aa; background: #18181b; border-left: 3px solid var(--primary); padding: 0.5rem 0.75rem; margin-bottom: 1rem; border-radius: 0 0.5rem 0.5rem 0; }
     </style>
@@ -42,7 +43,7 @@
     <p class="subtitle">Direct Phone-to-Screen Bluetooth Control</p>
 
     <div class="note">
-        💡 <b>iOS Notice</b>: Apple Safari/Chrome disable Web Bluetooth. On iPhone/iPad, open this page in the free <b>Bluefy</b> or <b>WebBLE</b> browser app. On Android/Mac/PC, use Chrome/Edge natively!
+        💡 <b>iOS Notice</b>: Apple Safari/Chrome disable Web Bluetooth. On iPhone/iPad, open this page in the free <b>Bluefy</b> app from the App Store. On Android/Mac/PC, use Chrome or Edge!
     </div>
 
     <div id="status" class="status disconnected">Status: Disconnected</div>
@@ -81,6 +82,7 @@
 const WRITE_UUID  = "0000fa02-0000-1000-8000-00805f9b34fb";
 const NOTIFY_UUID = "0000fa03-0000-1000-8000-00805f9b34fb";
 const SERVICE_UUID = "000000fa-0000-1000-8000-00805f9b34fb";
+const WINDOW_SIZE = 12288; // 12 KB per window frame
 
 let device = null;
 let writeChar = null;
@@ -89,9 +91,17 @@ let selectedFile = null;
 
 const statusEl = document.getElementById("status");
 
-function updateStatus(text, connected = false) {
+function updateStatus(text, type = "disconnected") {
     statusEl.innerText = `Status: ${text}`;
-    statusEl.className = `status ${connected ? "connected" : "disconnected"}`;
+    statusEl.className = `status ${type}`;
+}
+
+function parseHexColor(hex) {
+    let c = hex.replace("#", "");
+    if (c.length === 3) c = c.split("").map(x => x + x).join("");
+    const num = parseInt(c, 16);
+    if (isNaN(num)) return { r: 255, g: 255, b: 255 };
+    return { r: (num >> 16) & 255, g: (num >> 8) & 255, b: num & 255 };
 }
 
 // CRC32 Algorithm (IEEE 802.3)
@@ -109,17 +119,18 @@ function crc32(bytes) {
 // ─── BLE Connection ───────────────────────────────────────────────────
 document.getElementById("btnConnect").addEventListener("click", async () => {
     if (!navigator.bluetooth) {
-        return alert("Web Bluetooth is not supported in this browser!\n\n- iOS (iPhone): Download 'Bluefy' from App Store.\n- Android/Mac: Use Chrome/Edge over HTTPS.");
+        updateStatus("Web Bluetooth not supported in browser", "disconnected");
+        return;
     }
 
     try {
-        updateStatus("Scanning for BLE...");
+        updateStatus("Scanning for BLE...", "busy");
         device = await navigator.bluetooth.requestDevice({
             filters: [{ namePrefix: "LED_BLE" }],
             optionalServices: [SERVICE_UUID, "0000fa00-0000-1000-8000-00805f9b34fb"]
         });
 
-        updateStatus("Connecting GATT...");
+        updateStatus("Connecting GATT...", "busy");
         const server = await device.gatt.connect();
 
         let service;
@@ -136,16 +147,18 @@ document.getElementById("btnConnect").addEventListener("click", async () => {
             await notifyChar.startNotifications();
         } catch (e) { console.log("Notify setup warning:", e); }
 
-        updateStatus(`Connected to ${device.name || "iPixel"}`, true);
+        updateStatus(`Connected to ${device.name || "iPixel"}`, "connected");
     } catch (e) {
-        alert("Connection failed: " + e.message);
-        updateStatus("Disconnected");
+        updateStatus("Connection failed: " + e.message, "disconnected");
     }
 });
 
 // ─── Low Level Chunked Send with BLE Delay ────────────────────────────
 async function sendRawCommand(bytes) {
-    if (!writeChar) return alert("Please connect to BLE display first!");
+    if (!writeChar) {
+        updateStatus("Connect Bluetooth first!", "disconnected");
+        return;
+    }
     const CHUNK = 244;
     for (let i = 0; i < bytes.length; i += CHUNK) {
         const chunk = bytes.slice(i, i + CHUNK);
@@ -159,7 +172,10 @@ async function sendRawCommand(bytes) {
 }
 
 async function sendWindowFrames(payloadBytes, isGif = false) {
-    if (!writeChar) return alert("Please connect to BLE display first!");
+    if (!writeChar) {
+        updateStatus("Connect Bluetooth first!", "disconnected");
+        return;
+    }
 
     const totalSize = payloadBytes.length;
     const crcVal = crc32(payloadBytes);
@@ -167,49 +183,93 @@ async function sendWindowFrames(payloadBytes, isGif = false) {
     const cmdByte = isGif ? 0x03 : 0x02;
     const typeByte = isGif ? 0x02 : 0x00;
 
-    // Header MUST be 13 bytes: [cmd, 0x00, option] [4 bytes LE size] [4 bytes LE CRC] [typeByte, slot]
-    const header = new Uint8Array(13);
-    header[0] = cmdByte;
-    header[1] = 0x00;
-    header[2] = 0x00; // option
+    let pos = 0;
+    let windowIndex = 0;
+    const totalWindows = Math.ceil(totalSize / WINDOW_SIZE) || 1;
 
-    new DataView(header.buffer).setUint32(3, totalSize, true);
-    new DataView(header.buffer).setUint32(7, crcVal, true);
-    header[11] = typeByte; // 0x00 for PNG, 0x02 for GIF
-    header[12] = 0x00;     // slot
+    try {
+        while (pos < totalSize) {
+            const windowEnd = Math.min(pos + WINDOW_SIZE, totalSize);
+            const chunkData = payloadBytes.subarray(pos, windowEnd);
+            const option = (windowIndex === 0) ? 0x00 : 0x02;
 
-    const frame = new Uint8Array(header.length + totalSize);
-    frame.set(header, 0);
-    frame.set(payloadBytes, header.length);
+            const header = new Uint8Array(13);
+            header[0] = cmdByte;
+            header[1] = 0x00;
+            header[2] = option;
 
-    // 2-byte LE length prefix
-    const prefix = new Uint8Array(2);
-    new DataView(prefix.buffer).setUint16(0, frame.length + 2, true);
+            new DataView(header.buffer).setUint32(3, totalSize, true);
+            new DataView(header.buffer).setUint32(7, crcVal, true);
+            header[11] = typeByte;
+            header[12] = 0x00; // slot
 
-    const fullMsg = new Uint8Array(prefix.length + frame.length);
-    fullMsg.set(prefix, 0);
-    fullMsg.set(frame, prefix.length);
+            const frame = new Uint8Array(header.length + chunkData.length);
+            frame.set(header, 0);
+            frame.set(chunkData, header.length);
 
-    updateStatus(`Streaming ${isGif ? 'GIF' : 'Image'} (${Math.round(totalSize / 1024)} KB)...`);
-    await sendRawCommand(fullMsg);
-    updateStatus("Sent successfully!", true);
+            const prefix = new Uint8Array(2);
+            new DataView(prefix.buffer).setUint16(0, frame.length + 2, true);
+
+            const fullMsg = new Uint8Array(prefix.length + frame.length);
+            fullMsg.set(prefix, 0);
+            fullMsg.set(frame, prefix.length);
+
+            updateStatus(`Streaming window ${windowIndex + 1}/${totalWindows}...`, "busy");
+            await sendRawCommand(fullMsg);
+
+            windowIndex++;
+            pos = windowEnd;
+        }
+
+        updateStatus(`Sent ${isGif ? 'GIF' : 'Image'} successfully!`, "connected");
+    } catch (e) {
+        updateStatus("Error streaming payload: " + e.message, "disconnected");
+    }
 }
 
-// ─── Render Text to Canvas & PNG ──────────────────────────────────────
+// ─── Render Text to Canvas with Crisp Thresholding ───────────────────
 function renderTextPNG(text, textColor, bgColor) {
     const canvas = document.createElement("canvas");
     canvas.width = 96;
     canvas.height = 16;
     const ctx = canvas.getContext("2d");
 
-    ctx.fillStyle = bgColor;
-    ctx.fillRect(0, 0, 96, 16);
+    if (ctx) {
+        ctx.imageSmoothingEnabled = false;
 
-    ctx.fillStyle = textColor;
-    ctx.font = "bold 13px sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText(text, 48, 8);
+        const bgRgb = parseHexColor(bgColor);
+        ctx.fillStyle = `rgb(${bgRgb.r}, ${bgRgb.g}, ${bgRgb.b})`;
+        ctx.fillRect(0, 0, 96, 16);
+
+        const textRgb = parseHexColor(textColor);
+        ctx.fillStyle = `rgb(${textRgb.r}, ${textRgb.g}, ${textRgb.b})`;
+        ctx.font = "bold 12px Arial, Helvetica, sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(text, 48, 8.5);
+
+        // Crisp pixel thresholding
+        const imgData = ctx.getImageData(0, 0, 96, 16);
+        const data = imgData.data;
+
+        for (let i = 0; i < data.length; i += 4) {
+            const r = data[i], g = data[i + 1], b = data[i + 2], a = data[i + 3];
+            const diff = Math.abs(r - bgRgb.r) + Math.abs(g - bgRgb.g) + Math.abs(b - bgRgb.b);
+
+            if (a > 60 && diff > 50) {
+                data[i] = textRgb.r;
+                data[i + 1] = textRgb.g;
+                data[i + 2] = textRgb.b;
+                data[i + 3] = 255;
+            } else {
+                data[i] = bgRgb.r;
+                data[i + 1] = bgRgb.g;
+                data[i + 2] = bgRgb.b;
+                data[i + 3] = 255;
+            }
+        }
+        ctx.putImageData(imgData, 0, 0);
+    }
 
     const prevCtx = document.getElementById("previewCanvas").getContext("2d");
     prevCtx.drawImage(canvas, 0, 0);
@@ -231,7 +291,7 @@ document.getElementById("btnSendText").addEventListener("click", async () => {
         const pngBytes = await renderTextPNG(text, textCol, bgCol);
         await sendWindowFrames(pngBytes, false);
     } catch (e) {
-        alert("Error sending text: " + e.message);
+        updateStatus("Error: " + e.message, "disconnected");
     }
 });
 
@@ -243,7 +303,10 @@ document.getElementById("fileInput").addEventListener("change", (e) => {
 
 document.getElementById("btnSendImage").addEventListener("click", async () => {
     try {
-        if (!selectedFile) return alert("Select an image or GIF file first!");
+        if (!selectedFile) {
+            updateStatus("Please select a file first!", "disconnected");
+            return;
+        }
         const isGif = selectedFile.name.toLowerCase().endsWith(".gif");
         const buf = await selectedFile.arrayBuffer();
         const bytes = new Uint8Array(buf);
@@ -267,7 +330,7 @@ document.getElementById("btnSendImage").addEventListener("click", async () => {
             await sendWindowFrames(bytes, true);
         }
     } catch (e) {
-        alert("Error sending image/GIF: " + e.message);
+        updateStatus("Error sending file: " + e.message, "disconnected");
     }
 });
 

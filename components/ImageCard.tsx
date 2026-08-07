@@ -128,7 +128,7 @@ export function ImageCard({ image, folders, onPreview, onAddTag, onDelete }: Ima
                                         const { getBLEState, sendUrlBLE, showToast } = await import('@/lib/webBluetooth');
                                         const bleState = getBLEState();
                                         if (bleState.connected && image.gifUrl) {
-                                            await sendUrlBLE(image.gifUrl, true);
+                                            await sendUrlBLE(image.gifUrl, true, image.url);
                                         } else {
                                             const { sendImageToScreenAction } = await import('@/app/actions');
                                             await sendImageToScreenAction(image.id, true);

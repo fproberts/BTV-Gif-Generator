@@ -95,7 +95,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Generate 96x16 scrolling GIF")
     parser.add_argument("image_path", help="Path to input image")
     parser.add_argument("--output", "-o", help="Output GIF path")
-    parser.add_argument("--step", "-s", type=int, default=1, help="Pixel step size per frame (default: 1)")
+    parser.add_argument("--step", "-s", type=int, default=2, help="Pixel step size per frame (default: 2)")
     parser.add_argument("--delay", "-d", type=int, default=100, help="Frame delay in ms (default: 100ms)")
 
     args = parser.parse_args()

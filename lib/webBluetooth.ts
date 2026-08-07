@@ -2,6 +2,8 @@
  * Web Bluetooth Client for iPixel 96x16 LED Panels
  */
 
+import { generateClientScrollingGif } from './clientGifGenerator';
+
 const SERVICE_UUID = "000000fa-0000-1000-8000-00805f9b34fb";
 const WRITE_UUID = "0000fa02-0000-1000-8000-00805f9b34fb";
 const NOTIFY_UUID = "0000fa03-0000-1000-8000-00805f9b34fb";
@@ -246,7 +248,7 @@ export async function sendWindowFramesBLE(payloadBytes: Uint8Array, isGif = fals
 
             await sendRawCommandBLE(fullMsg);
 
-            // If there are more windows, wait for hardware notify ACK (or flash write pause)
+            // If there are more windows, wait for hardware notify ACK
             if (pos + WINDOW_SIZE < totalSize) {
                 await waitForNotifyAck(800);
             }
@@ -265,7 +267,7 @@ export async function sendWindowFramesBLE(payloadBytes: Uint8Array, isGif = fals
 }
 
 /**
- * Render text to PNG with Crisp Pixel Thresholding (eliminates canvas anti-aliasing blur)
+ * Render text to PNG with Crisp Pixel Thresholding
  */
 export function renderTextPNG(text: string, textColor: string, bgColor: string): Promise<Uint8Array> {
     return new Promise((resolve) => {
@@ -327,7 +329,7 @@ export async function sendTextBLE(text: string, textColor: string, bgColor: stri
     await sendWindowFramesBLE(pngBytes, false);
 }
 
-export async function sendUrlBLE(url: string, isGif = false): Promise<void> {
+export async function sendUrlBLE(url: string, isGif = false, fallbackImageUrl?: string): Promise<void> {
     const response = await fetch(url);
     if (!response.ok) {
         showToast("Error fetching media URL");
@@ -337,8 +339,23 @@ export async function sendUrlBLE(url: string, isGif = false): Promise<void> {
     const arrayBuffer = await blob.arrayBuffer();
     const bytes = new Uint8Array(arrayBuffer);
 
+    // Optimization: If pre-uploaded GIF is > 40 KB (large server file), render client-side to 15 KB!
+    if (isGif && bytes.length > 40000) {
+        showToast("Fast-optimizing image for Bluetooth...");
+        const targetSrc = fallbackImageUrl || url;
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.src = targetSrc;
+        await img.decode();
+
+        const fastGifBytes = await generateClientScrollingGif(img, 96, 16, 2, 80);
+        await sendWindowFramesBLE(fastGifBytes, true);
+        return;
+    }
+
     if (!isGif) {
         const img = new Image();
+        img.crossOrigin = "anonymous";
         img.src = URL.createObjectURL(blob);
         await img.decode();
 

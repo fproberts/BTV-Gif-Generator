@@ -74,11 +74,17 @@ def resize_and_slide_image_to_gif(
         output_path = image_path.rsplit('.', 1)[0] + '_1px_scroll.gif'
 
     if frames:
-        # Save as optimized palette GIF
-        frames[0].save(
+        # Apply 30% Lossy Palette Quantization (128 adaptive colors)
+        lossy_frames = []
+        for f in frames:
+            q = f.quantize(colors=128, method=Image.Quantize.MEDIANCUT)
+            lossy_frames.append(q.convert("RGB"))
+
+        # Save as optimized lossy GIF
+        lossy_frames[0].save(
             output_path,
             save_all=True,
-            append_images=frames[1:],
+            append_images=lossy_frames[1:],
             duration=duration_ms,
             loop=loop_count,
             optimize=True,

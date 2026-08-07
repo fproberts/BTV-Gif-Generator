@@ -125,18 +125,19 @@ export function ImageCard({ image, folders, onPreview, onAddTag, onDelete }: Ima
                             <button
                                 onClick={async () => {
                                     try {
-                                        const { getBLEState, sendUrlBLE, showToast } = await import('@/lib/webBluetooth');
-                                        const bleState = getBLEState();
+                                        const { getBLEState, connectBLE, sendUrlBLE, showToast } = await import('@/lib/webBluetooth');
+                                        let bleState = getBLEState();
+                                        if (!bleState.connected) {
+                                            showToast("Connecting Bluetooth...");
+                                            await connectBLE();
+                                            bleState = getBLEState();
+                                        }
                                         if (bleState.connected && image.gifUrl) {
                                             await sendUrlBLE(image.gifUrl, true, image.url);
-                                        } else {
-                                            const { sendImageToScreenAction } = await import('@/app/actions');
-                                            await sendImageToScreenAction(image.id, true);
-                                            showToast("Sent to LED Screen!");
                                         }
                                     } catch (e: any) {
                                         const { showToast } = await import('@/lib/webBluetooth');
-                                        showToast("Failed to send: " + e.message);
+                                        showToast("Bluetooth connection canceled");
                                     }
                                 }}
                                 className="w-full flex items-center justify-center space-x-1 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black font-extrabold transition-colors text-xs"

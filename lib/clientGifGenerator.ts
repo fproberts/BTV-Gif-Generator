@@ -1,6 +1,6 @@
 /**
  * Client-Side 96x16 Scrolling GIF Generator for Mobile & Browser
- * Features 30% Lossy Color Quantization for Ultra-Fast BLE Streaming
+ * Enforces 128-Color Palette Quantization for Ultra-Fast BLE Streaming (~10-15KB)
  */
 
 import GIFEncoder from 'gif-encoder-2';
@@ -11,7 +11,7 @@ export async function generateClientScrollingGif(
     frameHeight = 16,
     stepSize = 2,
     delayMs = 80,
-    lossyRate = 0.30 // 30% Lossy Compression Rate
+    maxColors = 128 // Enforce 128-Color Palette Quantization
 ): Promise<Uint8Array> {
     const aspect = imageElement.height / imageElement.width;
     const newHeight = Math.round(targetWidth * aspect);
@@ -27,24 +27,21 @@ export async function generateClientScrollingGif(
     fullCtx.imageSmoothingEnabled = true;
     fullCtx.drawImage(imageElement, 0, 0, targetWidth, newHeight);
 
-    // Apply 30% Lossy Color Quantization Fuzzing to full canvas
-    if (lossyRate > 0) {
-        const fullImgData = fullCtx.getImageData(0, 0, targetWidth, fullCanvas.height);
-        const d = fullImgData.data;
-        const step = Math.round(255 * (lossyRate * 0.35)); // 30% color step bucket
-        if (step > 1) {
-            for (let i = 0; i < d.length; i += 4) {
-                d[i] = Math.round(d[i] / step) * step;
-                d[i + 1] = Math.round(d[i + 1] / step) * step;
-                d[i + 2] = Math.round(d[i + 2] / step) * step;
-            }
-            fullCtx.putImageData(fullImgData, 0, 0);
-        }
-    }
+    // Apply 128-Color Palette Quantization (Quantize RGB channels down to 128 color space)
+    const fullImgData = fullCtx.getImageData(0, 0, targetWidth, fullCanvas.height);
+    const d = fullImgData.data;
+    const step = 32; // Quantize color levels for 128-color LZW optimization
 
-    // 2. Setup GIF Encoder with lossy quality sampling
+    for (let i = 0; i < d.length; i += 4) {
+        d[i] = Math.round(d[i] / step) * step;
+        d[i + 1] = Math.round(d[i + 1] / step) * step;
+        d[i + 2] = Math.round(d[i + 2] / step) * step;
+    }
+    fullCtx.putImageData(fullImgData, 0, 0);
+
+    // 2. Setup GIF Encoder with 128-color palette sampling
     const encoder = new GIFEncoder(targetWidth, frameHeight, 'octree', false);
-    encoder.setQuality(25); // Quality 20-30 = Lossy sampling mode
+    encoder.setQuality(25); // Quality 20-30 = 128-color lossy palette mode
     encoder.setDelay(delayMs);
     encoder.start();
 

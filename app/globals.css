@@ -1,39 +1,30 @@
 @import "tailwindcss";
 
 @theme {
-  --color-primary: #7000ff;
-  --color-secondary: #00fff2;
-  --color-accent: #ff00de;
-  --color-background: #0a0a0a;
-  --color-foreground: #ededed;
-  --color-surface: #1a1a1a;
+  --color-primary: #c85a32;
+  --color-primary-foreground: #fbf7f2;
+  --color-secondary: #6b7c4d;
+  --color-secondary-foreground: #fbf7f2;
+  --color-amber: #d97706;
+  --color-sand: #e6d7c3;
+  --color-sand-muted: #a89b8c;
+  --color-umber: #14110f;
+  --color-clay: #201b18;
+  --color-destructive: #99332c;
+  --color-destructive-foreground: #fbf7f2;
+  --color-background: #14110f;
+  --color-foreground: #f4ebe1;
 
-  --animate-float: float 6s ease-in-out infinite;
-  --animate-gradient-x: gradient-x 15s ease infinite;
+  --animate-warm-pulse: warm-pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 
-  @keyframes float {
-
-    0%,
-    100% {
-      transform: translateY(0);
+  @keyframes warm-pulse {
+    0%, 100% {
+      opacity: 1;
+      transform: scale(1);
     }
-
     50% {
-      transform: translateY(-10px);
-    }
-  }
-
-  @keyframes gradient-x {
-
-    0%,
-    100% {
-      background-size: 200% 200%;
-      background-position: left center;
-    }
-
-    50% {
-      background-size: 200% 200%;
-      background-position: right center;
+      opacity: 0.75;
+      transform: scale(1.05);
     }
   }
 }
@@ -42,22 +33,29 @@
   color-scheme: dark;
 }
 
+/* Custom Soft Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #14110f;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #38302b;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #c85a32;
+}
+
 body {
   background-color: var(--color-background);
   color: var(--color-foreground);
-  font-family: var(--font-sans), sans-serif;
+  font-family: var(--font-outfit), system-ui, -apple-system, sans-serif;
   overflow-x: hidden;
-}
-
-@utility text-gradient {
-  background: linear-gradient(to right, var(--color-primary), var(--color-accent), var(--color-secondary));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-
-@utility glass-panel {
-  background: rgba(26, 26, 26, 0.6);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  min-height: 100vh;
 }

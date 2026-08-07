@@ -1,7 +1,13 @@
+'use client';
+
 import { useState } from 'react';
-import { Play, Tag, Trash2, Download, MoreHorizontal, Film, FolderInput, Eye, EyeOff } from 'lucide-react';
+import { Play, Tag, Trash2, Download, Film, FolderInput, Eye, Tv } from 'lucide-react';
 import { generateGifForImage, updateImageFolder } from '@/app/actions';
 import { useRouter } from 'next/navigation';
+import { Card } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { toast } from 'sonner';
 
 interface ImageCardProps {
     image: any;
@@ -13,167 +19,218 @@ interface ImageCardProps {
 
 export function ImageCard({ image, folders, onPreview, onAddTag, onDelete }: ImageCardProps) {
     const [isGeneratorRunning, setIsGeneratorRunning] = useState(false);
+    const [isSending, setIsSending] = useState(false);
+    const [isDownloading, setIsDownloading] = useState(false);
     const router = useRouter();
 
     const handleGenerateGif = async () => {
         setIsGeneratorRunning(true);
+        const toastId = toast.loading(`Generating animation for "${image.name || image.originalName}"...`);
         try {
-            // I should revert to importing from '@/app/actions' and ensure that action uses the new lib.
-            // Let's check 'app/actions.ts' in a separate step or assume I need to fix logic here.
-
-            // Actually, I haven't updated 'app/actions.ts' to use the new python spawner yet!
-            // The previous step updated 'lib/gifGenerator.ts'. 
-            // The 'app/actions.ts' calls 'generateGifForImage' which calls 'generateGif' from lib.
-            // So sticking to 'generateGifForImage' from actions is correct.
-
-            // Correction for ReplacementContent: Use 'generateGifForImage' from actions.
-
             await generateGifForImage(image.id);
+            toast.success("Animation generated!", { id: toastId });
             router.refresh();
-        } catch (e) {
+        } catch (e: any) {
             console.error(e);
-            alert("Failed to generate GIF");
+            toast.error(`Failed to generate GIF: ${e?.message || 'Unknown error'}`, { id: toastId });
         } finally {
             setIsGeneratorRunning(false);
         }
     };
 
+    const handleSendToScreen = async () => {
+        setIsSending(true);
+        const toastId = toast.loading("Connecting & broadcasting to screen...");
+        try {
+            const { getBLEState, connectBLE, sendUrlBLE } = await import('@/lib/webBluetooth');
+            let bleState = getBLEState();
+            if (!bleState.connected) {
+                await connectBLE();
+                bleState = getBLEState();
+            }
+            if (bleState.connected && image.gifUrl) {
+                await sendUrlBLE(image.gifUrl, true, image.url);
+                toast.success("Broadcasting on screen!", { id: toastId });
+            } else {
+                toast.error("Bluetooth device not connected.", { id: toastId });
+            }
+        } catch (e: any) {
+            toast.error(`Broadcast failed: ${e?.message || 'Canceled'}`, { id: toastId });
+        } finally {
+            setIsSending(false);
+        }
+    };
+
+    const handleDownload = async () => {
+        setIsDownloading(true);
+        const toastId = toast.loading("Downloading GIF file...");
+        try {
+            const response = await fetch(image.gifUrl);
+            if (!response.ok) throw new Error("Network response was not ok");
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${image.name || 'animation'}.gif`;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+            toast.success("Download complete!", { id: toastId });
+        } catch (e: any) {
+            toast.error("Failed to download GIF.", { id: toastId });
+        } finally {
+            setIsDownloading(false);
+        }
+    };
 
     const handleDelete = () => {
         onDelete(image);
-    }
+    };
 
     const handleAddTag = () => {
         onAddTag(image);
-    }
+    };
 
     const handleMove = async (e: React.ChangeEvent<HTMLSelectElement>) => {
         const folderId = e.target.value === "root" ? null : e.target.value;
-        await updateImageFolder(image.id, folderId);
-        router.refresh();
-    }
+        const toastId = toast.loading("Updating folder...");
+        try {
+            await updateImageFolder(image.id, folderId);
+            toast.success("Moved image", { id: toastId });
+            router.refresh();
+        } catch (err: any) {
+            toast.error("Failed to move image", { id: toastId });
+        }
+    };
 
     return (
-        <div className="group relative rounded-2xl overflow-hidden glass-panel hover:shadow-[0_0_30px_rgba(112,0,255,0.2)] transition-all duration-300 flex flex-col h-full">
+        <Card className="group relative overflow-hidden hover:border-[#c85a32]/50 transition-all duration-300 flex flex-col h-full bg-[#201b18] border-[#38302b] rounded-3xl">
 
-            {/* Helper Actions Overlay (Top Right) */}
-            <div className="absolute top-2 right-2 z-20 flex space-x-2 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
-                <button onClick={handleDelete} className="p-2 rounded-full bg-black/50 hover:bg-red-500/80 backdrop-blur-md text-white transition-colors" title="Delete">
-                    <Trash2 className="w-4 h-4" />
-                </button>
+            {/* Delete Button (Top Right) */}
+            <div className="absolute top-2.5 right-2.5 z-20 flex space-x-2 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
+                <Button
+                    variant="destructive"
+                    size="icon"
+                    onClick={handleDelete}
+                    className="h-8 w-8 rounded-full bg-[#14110f]/80 backdrop-blur-md border border-[#38302b] text-[#f4ebe1]"
+                    title="Delete image"
+                >
+                    <Trash2 className="w-3.5 h-3.5" />
+                </Button>
             </div>
 
             {/* Move Folder Overlay (Top Left) */}
-            <div className="absolute top-2 left-2 z-20 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
+            <div className="absolute top-2.5 left-2.5 z-20 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
                 <div className="relative group/select">
-                    <div className="absolute inset-y-0 left-0 flex items-center pl-2 pointer-events-none text-white/70">
+                    <div className="absolute inset-y-0 left-0 flex items-center pl-2.5 pointer-events-none text-[#a89b8c]">
                         <FolderInput className="w-3 h-3" />
                     </div>
                     <select
                         onChange={handleMove}
                         value={image.folderId || "root"}
-                        className="pl-8 pr-2 py-1.5 rounded-full bg-black/60 hover:bg-black/80 backdrop-blur-md text-xs text-white border border-white/10 outline-none appearance-none cursor-pointer w-full max-w-[120px] truncate"
+                        className="pl-8 pr-2 py-1 rounded-full bg-[#14110f]/80 backdrop-blur-md text-[11px] font-bold text-[#e6d7c3] border border-[#38302b] outline-none appearance-none cursor-pointer w-full max-w-[120px] truncate transition-colors"
                     >
-                        <option value="root">All</option>
+                        <option value="root" className="bg-[#201b18]">All</option>
                         {folders.map(f => (
-                            <option key={f.id} value={f.id}>{f.name}</option>
+                            <option key={f.id} value={f.id} className="bg-[#201b18]">{f.name}</option>
                         ))}
                     </select>
                 </div>
             </div>
 
-            {/* Image Preview */}
-            <div className="relative aspect-[3/4] bg-black/50 overflow-hidden group/image">
+            {/* Image Preview Container */}
+            <div className="relative aspect-[3/4] bg-[#14110f] overflow-hidden group/image border-b border-[#38302b]">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <div className="w-full h-full relative">
-                    <img
-                        src={image.url}
-                        className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
-                        alt={image.name || image.originalName}
-                    />
-                </div>
+                <img
+                    src={image.url}
+                    className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
+                    alt={image.name || image.originalName}
+                />
 
                 {image.gifUrl && (
-                    <div className="absolute bottom-2 right-2 px-2 py-1 bg-secondary text-black text-[10px] font-bold rounded-full animate-pulse shadow-lg pointer-events-none">
-                        GIF READY
+                    <div className="absolute bottom-2.5 right-2.5">
+                        <Badge variant="moss" className="font-extrabold text-[9px] px-2.5 py-0.5">
+                            READY
+                        </Badge>
                     </div>
                 )}
             </div>
 
-            {/* Content */}
-            <div className="p-4 space-y-3 bg-gradient-to-t from-black via-black/80 to-transparent flex-1 flex flex-col justify-end">
-                <h4 className="font-bold truncate text-white/90 text-sm" title={image.name || image.originalName}>
-                    {image.name || image.originalName}
-                </h4>
+            {/* Content & Actions */}
+            <div className="p-4 space-y-3 flex-1 flex flex-col justify-between">
+                <div>
+                    <h4 className="font-bold truncate text-[#f4ebe1] text-sm" title={image.name || image.originalName}>
+                        {image.name || image.originalName}
+                    </h4>
 
-                {/* Tags */}
-                <div className="flex flex-wrap gap-2">
-                    {image.tags?.map((tag: string, i: number) => (
-                        <span key={i} className="text-[10px] uppercase font-bold tracking-wider px-2 py-1 rounded bg-white/10 text-white/70">
-                            {tag}
-                        </span>
-                    ))}
-                    <button onClick={handleAddTag} className="text-[10px] px-2 py-1 rounded border border-white/10 text-white/40 hover:text-white hover:border-white/30 transition-colors">
-                        +
-                    </button>
+                    {/* Tags */}
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                        {image.tags?.map((tag: string, i: number) => (
+                            <Badge key={i} variant="outline" className="text-[9px] px-2 py-0.5 bg-[#28221e] text-[#a89b8c] border-[#38302b]">
+                                {tag}
+                            </Badge>
+                        ))}
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={handleAddTag}
+                            className="h-5 px-2 text-[10px] rounded-lg border-[#38302b] text-[#a89b8c] hover:text-[#f4ebe1]"
+                        >
+                            + Tag
+                        </Button>
+                    </div>
                 </div>
 
-                {/* Actions Bar */}
+                {/* Actions */}
                 <div className="pt-2 flex flex-col gap-2 mt-auto">
                     {image.gifUrl ? (
                         <>
-                            <button
-                                onClick={async () => {
-                                    try {
-                                        const { getBLEState, connectBLE, sendUrlBLE, showToast } = await import('@/lib/webBluetooth');
-                                        let bleState = getBLEState();
-                                        if (!bleState.connected) {
-                                            showToast("Connecting Bluetooth...");
-                                            await connectBLE();
-                                            bleState = getBLEState();
-                                        }
-                                        if (bleState.connected && image.gifUrl) {
-                                            await sendUrlBLE(image.gifUrl, true, image.url);
-                                        }
-                                    } catch (e: any) {
-                                        const { showToast } = await import('@/lib/webBluetooth');
-                                        showToast("Bluetooth connection canceled");
-                                    }
-                                }}
-                                className="w-full flex items-center justify-center space-x-1 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black font-extrabold transition-colors text-xs"
+                            <Button
+                                variant="terracotta"
+                                onClick={handleSendToScreen}
+                                isLoading={isSending}
+                                loadingText="Sending..."
+                                className="w-full h-10 text-xs font-bold rounded-2xl shadow-md"
                             >
-                                <span>📺 Send to Screen</span>
-                            </button>
+                                <Tv className="w-4 h-4 mr-1.5" />
+                                <span>Send to Screen</span>
+                            </Button>
                             <div className="flex gap-2">
-                                <a
-                                    href={image.gifUrl}
-                                    download={`${image.name || 'animation'}.gif`}
-                                    className="flex-1 flex items-center justify-center space-x-1 py-2 rounded-lg bg-secondary text-black font-bold hover:bg-secondary/90 transition-colors text-xs"
+                                <Button
+                                    variant="secondary"
+                                    onClick={handleDownload}
+                                    isLoading={isDownloading}
+                                    loadingText="Downloading..."
+                                    className="flex-1 h-8.5 text-xs rounded-xl"
                                 >
-                                    <Download className="w-3 h-3" />
+                                    <Download className="w-3.5 h-3.5 mr-1" />
                                     <span>Download</span>
-                                </a>
-                                <button
+                                </Button>
+                                <Button
+                                    variant="outline"
                                     onClick={() => onPreview(image)}
-                                    className="flex-1 flex items-center justify-center space-x-1 py-2 rounded-lg font-bold transition-colors text-xs border bg-transparent border-white/20 text-white hover:bg-white/10"
+                                    className="flex-1 h-8.5 text-xs rounded-xl"
                                 >
-                                    <Eye className="w-3 h-3" />
+                                    <Eye className="w-3.5 h-3.5 mr-1" />
                                     <span>Preview</span>
-                                </button>
+                                </Button>
                             </div>
                         </>
                     ) : (
-                        <button
+                        <Button
+                            variant="default"
                             onClick={handleGenerateGif}
-                            disabled={isGeneratorRunning}
-                            className="w-full flex items-center justify-center space-x-2 py-2 rounded-lg bg-primary hover:bg-primary/80 transition-colors font-bold disabled:opacity-50 text-xs"
+                            isLoading={isGeneratorRunning}
+                            loadingText="Cooking GIF..."
+                            className="w-full h-10 text-xs font-bold rounded-2xl"
                         >
-                            {isGeneratorRunning ? <div className="animate-spin mr-2">C</div> : <Film className="w-3 h-3" />}
-                            <span>{isGeneratorRunning ? "Cooking..." : "Make GIF"}</span>
-                        </button>
+                            <Film className="w-4 h-4 mr-1.5" />
+                            <span>Make Animation</span>
+                        </Button>
                     )}
                 </div>
             </div>
-        </div>
+        </Card>
     );
 }

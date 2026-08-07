@@ -1,8 +1,12 @@
 'use client';
 
 import { useState, useRef } from 'react';
-import { Upload, X, AlertCircle } from 'lucide-react';
-import { Modal } from './Modal';
+import { Upload, AlertCircle, Loader2, ImagePlus } from 'lucide-react';
+import { Card } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
+import { toast } from 'sonner';
 
 interface UploadZoneProps {
     onUpload: (formData: FormData) => Promise<void>;
@@ -46,18 +50,18 @@ export function UploadZone({ onUpload, existingNames }: UploadZoneProps) {
 
     const initiateUpload = (file: File) => {
         if (!file.type.startsWith('image/')) {
-            alert("Images only, please!");
+            toast.error("Please select an image file.");
             return;
         }
         setFileToUpload(file);
-        setCustomName(file.name.split('.')[0]); // Default name
+        setCustomName(file.name.split('.')[0]);
         setError(null);
     };
 
     const cancelUpload = () => {
         setFileToUpload(null);
         setCustomName("");
-        if (inputRef.current) inputRef.current.value = ""; // Reset input to allow re-upload
+        if (inputRef.current) inputRef.current.value = "";
     };
 
     const confirmUpload = async () => {
@@ -69,36 +73,33 @@ export function UploadZone({ onUpload, existingNames }: UploadZoneProps) {
             return;
         }
         if (existingNames.includes(name)) {
-            setError("Name already taken! Choose another.");
+            setError("Name already taken! Choose another name.");
             return;
         }
 
         setIsUploading(true);
+        const toastId = toast.loading(`Uploading "${name}"...`);
         try {
             const formData = new FormData();
             formData.append('file', fileToUpload);
             formData.append('customName', name);
             await onUpload(formData);
-            cancelUpload(); // Close and reset on success
-        } catch (e) {
+            toast.success("Image uploaded to library!", { id: toastId });
+            cancelUpload();
+        } catch (e: any) {
             console.error(e);
-            alert("Upload failed.");
+            toast.error(`Upload failed: ${e?.message || 'Error'}`, { id: toastId });
         } finally {
-            setIsUploading(false); // Only stop loading on error, success closes modal
-            // Note: If success, modal closes. If error, we stay to let user try again or cancel. 
-            // Wait, logic says 'Only stop loading on error'. 
-            // But if success, component might re-render or modal close.
-            // Safe to set false.
+            setIsUploading(false);
         }
     };
 
-
     return (
         <>
-            <div
-                className={`relative w-full h-64 border-4 border-dashed rounded-3xl transition-all duration-300 flex flex-col items-center justify-center cursor-pointer group overflow-hidden ${isDragging
-                    ? 'border-primary bg-primary/10 scale-[1.02] shadow-[0_0_50px_rgba(112,0,255,0.3)]'
-                    : 'border-white/10 hover:border-white/30 hover:bg-white/5'
+            <Card
+                className={`relative w-full h-52 border-2 border-dashed rounded-3xl transition-all duration-300 flex flex-col items-center justify-center cursor-pointer group overflow-hidden bg-[#1a1614] ${isDragging
+                    ? 'border-[#c85a32] bg-[#c85a32]/10 scale-[1.01]'
+                    : 'border-[#38302b] hover:border-[#c85a32]/50 hover:bg-[#201b18]'
                     } ${isUploading ? 'pointer-events-none opacity-50' : ''}`}
                 onDragEnter={handleDrag}
                 onDragLeave={handleDrag}
@@ -114,86 +115,102 @@ export function UploadZone({ onUpload, existingNames }: UploadZoneProps) {
                     accept="image/*"
                 />
 
-                <div className={`transition-transform duration-500 ${isDragging ? 'scale-110' : 'group-hover:scale-110'}`}>
-                    <Upload className={`w-16 h-16 mb-4 ${isDragging ? 'text-primary' : 'text-white/50 group-hover:text-white'}`} />
+                <div className={`transition-transform duration-300 ${isDragging ? 'scale-110' : 'group-hover:scale-110'}`}>
+                    <div className="p-3.5 rounded-2xl bg-[#28221e] border border-[#38302b] mb-3 text-[#c85a32]">
+                        <ImagePlus className="w-7 h-7" />
+                    </div>
                 </div>
 
-                <h3 className="text-xl font-bold text-white mb-2">
-                    {isDragging ? "Drop it like it's hot!" : "Drop Image Here"}
+                <h3 className="text-sm font-bold text-[#f4ebe1] mb-1">
+                    {isDragging ? "Drop your image here!" : "Upload Photo or Graphic"}
                 </h3>
-                <p className="text-white/40 font-mono text-sm">
-                    or click to browse
+                <p className="text-[#a89b8c] text-xs font-medium">
+                    Drag & drop or tap to choose from gallery
                 </p>
 
                 {isUploading && (
-                    <div className="absolute inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-10">
-                        <div className="text-center animate-pulse">
-                            <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-                            <p className="font-bold text-transparent bg-clip-text bg-gradient-to-r from-primary to-secondary">
-                                UPLOADING...
+                    <div className="absolute inset-0 bg-[#14110f]/90 backdrop-blur-sm flex items-center justify-center z-10">
+                        <div className="text-center flex flex-col items-center space-y-3">
+                            <Loader2 className="w-8 h-8 text-[#c85a32] animate-spin" />
+                            <p className="font-bold text-xs text-[#e6d7c3]">
+                                UPLOADING IMAGE...
                             </p>
                         </div>
                     </div>
                 )}
-            </div>
+            </Card>
 
-            {/* Custom Naming Modal */}
-            <Modal isOpen={!!fileToUpload} onClose={cancelUpload} title="Name Your Upload">
-                <div className="space-y-4">
-                    <div className="relative">
-                        <div className="w-full h-48 bg-black/50 rounded-xl overflow-hidden flex items-center justify-center mb-4 border border-white/10">
+            {/* Custom Naming Dialog Modal */}
+            <Dialog open={!!fileToUpload} onOpenChange={(open) => !open && !isUploading && cancelUpload()}>
+                <DialogContent className="max-w-md bg-[#1c1815] border-[#38302b] text-[#f4ebe1] rounded-3xl">
+                    <DialogHeader>
+                        <DialogTitle>Name Your Image</DialogTitle>
+                        <DialogDescription>
+                            Give this image a label for your Boogie Board library.
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    <div className="space-y-4 py-2">
+                        <div className="w-full h-44 bg-[#14110f] rounded-2xl overflow-hidden flex items-center justify-center border border-[#38302b]">
                             {fileToUpload && (
+                                /* eslint-disable-next-line @next/next/no-img-element */
                                 <img
                                     src={URL.createObjectURL(fileToUpload)}
-                                    className="max-w-full max-h-full object-contain"
-                                    alt="preview"
+                                    className="max-w-full max-h-full object-contain p-3"
+                                    alt="Upload preview"
                                 />
+                            )}
+                        </div>
+
+                        <div>
+                            <label className="block text-xs font-bold text-[#a89b8c] mb-1.5 uppercase tracking-wider">
+                                Display Name
+                            </label>
+                            <Input
+                                type="text"
+                                value={customName}
+                                onChange={(e) => {
+                                    setCustomName(e.target.value);
+                                    setError(null);
+                                }}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter' && !isUploading) confirmUpload();
+                                }}
+                                autoFocus
+                                disabled={isUploading}
+                                placeholder="e.g. Sunset Graphic"
+                                className={error ? 'border-red-500' : ''}
+                            />
+                            {error && (
+                                <div className="flex items-center text-red-400 text-xs mt-2 font-bold">
+                                    <AlertCircle className="w-3.5 h-3.5 mr-1" />
+                                    {error}
+                                </div>
                             )}
                         </div>
                     </div>
 
-                    <div>
-                        <label className="block text-xs font-bold text-white/50 mb-1 uppercase tracking-wider">Display Name</label>
-                        <input
-                            type="text"
-                            value={customName}
-                            onChange={(e) => {
-                                setCustomName(e.target.value);
-                                setError(null);
-                            }}
-                            onKeyDown={(e) => {
-                                if (e.key === 'Enter' && !isUploading) confirmUpload();
-                            }}
-                            autoFocus
-                            disabled={isUploading}
-                            className={`w-full bg-black/50 border ${error ? 'border-red-500' : 'border-white/10 focus:border-primary'} rounded-lg px-4 py-3 text-white outline-none transition-colors disabled:opacity-50`}
-                            placeholder="e.g. Cool Pattern"
-                        />
-                        {error && (
-                            <div className="flex items-center text-red-500 text-xs mt-2 font-bold animate-pulse">
-                                <AlertCircle className="w-3 h-3 mr-1" />
-                                {error}
-                            </div>
-                        )}
-                    </div>
-
-                    <div className="flex space-x-3 pt-4">
-                        <button
+                    <DialogFooter className="gap-2">
+                        <Button
+                            variant="outline"
                             onClick={cancelUpload}
-                            className="flex-1 py-3 rounded-xl font-bold text-white/50 hover:bg-white/5 hover:text-white transition-colors"
+                            disabled={isUploading}
+                            className="flex-1 rounded-2xl"
                         >
                             Cancel
-                        </button>
-                        <button
+                        </Button>
+                        <Button
+                            variant="terracotta"
                             onClick={confirmUpload}
-                            disabled={isUploading}
-                            className="flex-1 py-3 rounded-xl bg-gradient-to-r from-primary to-accent font-bold text-white shadow-lg hover:shadow-[0_0_20px_rgba(112,0,255,0.4)] transition-all active:scale-95 disabled:opacity-50"
+                            isLoading={isUploading}
+                            loadingText="Uploading..."
+                            className="flex-1 rounded-2xl font-bold"
                         >
-                            {isUploading ? "Uploading..." : "Upload Image"}
-                        </button>
-                    </div>
-                </div>
-            </Modal>
+                            Upload Image
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </>
     );
 }

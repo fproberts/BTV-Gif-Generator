@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { Tv, Sun, Type, Bluetooth, BluetoothConnected, ExternalLink, Zap, Clock, Trash2, CheckCircle, Image as ImageIcon, Film } from 'lucide-react';
+import { Tv, Sun, Type, Bluetooth, BluetoothConnected, ExternalLink, Zap, Clock, Trash2, Camera, Radio, Sliders, Flame } from 'lucide-react';
 import { sendTextToScreenAction, setBrightnessAction } from '@/app/actions';
 import {
     subscribeBLEState,
@@ -16,12 +16,22 @@ import {
     BLEState
 } from '@/lib/webBluetooth';
 import { generateClientScrollingGif } from '@/lib/clientGifGenerator';
+import { Card } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
+import { toast } from 'sonner';
 
 export function ScreenControlBar() {
     const [text, setText] = useState('');
     const [color, setColor] = useState('00FF00');
     const [isSendingText, setIsSendingText] = useState(false);
     const [isProcessingPhoneImg, setIsProcessingPhoneImg] = useState(false);
+    const [isConnectingBLE, setIsConnectingBLE] = useState(false);
+    const [activeBrightness, setActiveBrightness] = useState<number | null>(null);
+    const [isClockBusy, setIsClockBusy] = useState(false);
+    const [isMemoryBusy, setIsMemoryBusy] = useState(false);
+
     const phoneFileRef = useRef<HTMLInputElement>(null);
 
     const [bleState, setBleState] = useState<BLEState>({
@@ -33,35 +43,49 @@ export function ScreenControlBar() {
     });
 
     useEffect(() => {
-        const unsubscribe = subscribeBLEState(setBleState);
+        const unsubscribe = subscribeBLEState((state) => {
+            setBleState(state);
+            if (state.toastMessage) {
+                toast.info(state.toastMessage);
+            }
+        });
         return () => unsubscribe();
     }, []);
 
     const handleConnectBLE = async () => {
+        setIsConnectingBLE(true);
+        const toastId = toast.loading(bleState.connected ? "Disconnecting Bluetooth..." : "Connecting to screen...");
         try {
             if (bleState.connected) {
                 await disconnectBLE();
+                toast.success("Bluetooth disconnected", { id: toastId });
             } else {
                 await connectBLE();
+                toast.success("Bluetooth connected to screen!", { id: toastId });
             }
         } catch (e: any) {
-            console.warn("Bluetooth connection canceled or failed:", e);
+            console.warn("Bluetooth error:", e);
+            toast.error(`Bluetooth issue: ${e?.message || 'Canceled'}`, { id: toastId });
+        } finally {
+            setIsConnectingBLE(false);
         }
     };
 
     const handleSendText = async () => {
         if (!text.trim()) return;
         setIsSendingText(true);
+        const toastId = toast.loading(`Broadcasting "${text}" to screen...`);
         try {
             if (bleState.connected) {
                 await sendTextBLE(text, color, '000000');
+                toast.success(`Broadcasting "${text}" live!`, { id: toastId });
             } else {
                 await sendTextToScreenAction(text, color, '000000');
-                showToast(`Displayed text: "${text}" on LED screen!`);
+                toast.success(`Broadcasting "${text}" to screen!`, { id: toastId });
             }
             setText('');
         } catch (e: any) {
-            showToast(`Error sending text: ${e.message}`);
+            toast.error(`Broadcast failed: ${e?.message || 'Error'}`, { id: toastId });
         } finally {
             setIsSendingText(false);
         }
@@ -71,21 +95,21 @@ export function ScreenControlBar() {
         if (!e.target.files || e.target.files.length === 0) return;
         const file = e.target.files[0];
         setIsProcessingPhoneImg(true);
+        const toastId = toast.loading("Processing photo for screen animation...");
 
         try {
             if (!bleState.connected) {
-                showToast("Connecting Bluetooth...");
+                toast.loading("Connecting Bluetooth first...", { id: toastId });
                 await connectBLE();
             }
 
-            showToast("Generating smooth scrolling GIF on phone...");
+            toast.loading("Encoding animation & streaming...", { id: toastId });
             const isGif = file.name.toLowerCase().endsWith(".gif");
             const buf = await file.arrayBuffer();
 
             if (isGif) {
                 await sendWindowFramesBLE(new Uint8Array(buf), true);
             } else {
-                // Generate scrolling 96x16 GIF on phone client-side
                 const img = new Image();
                 img.src = URL.createObjectURL(file);
                 await img.decode();
@@ -93,8 +117,9 @@ export function ScreenControlBar() {
                 const gifBytes = await generateClientScrollingGif(img, 96, 16, 2, 80);
                 await sendWindowFramesBLE(gifBytes, true);
             }
+            toast.success("Photo streaming live on screen!", { id: toastId });
         } catch (err: any) {
-            showToast("Error processing phone photo: " + err.message);
+            toast.error("Error streaming phone photo: " + err.message, { id: toastId });
         } finally {
             setIsProcessingPhoneImg(false);
             if (phoneFileRef.current) phoneFileRef.current.value = "";
@@ -102,137 +127,167 @@ export function ScreenControlBar() {
     };
 
     const handleSetBrightness = async (level: number) => {
+        setActiveBrightness(level);
+        const toastId = toast.loading(`Setting brightness to ${level}%...`);
         try {
             if (bleState.connected) {
                 await setBrightnessBLE(level);
             } else {
                 await setBrightnessAction(level);
-                showToast(`Brightness set to ${level}%`);
             }
+            toast.success(`Brightness set to ${level}%`, { id: toastId });
         } catch (e: any) {
-            showToast(`Error setting brightness: ${e.message}`);
+            toast.error(`Error setting brightness: ${e?.message || 'Failed'}`, { id: toastId });
+        } finally {
+            setActiveBrightness(null);
         }
     };
 
     const handleSetClock = async () => {
+        if (!bleState.connected) {
+            toast.error("Connect Bluetooth first to enable Clock mode!");
+            return;
+        }
+        setIsClockBusy(true);
+        const toastId = toast.loading("Enabling Clock mode...");
         try {
-            if (bleState.connected) {
-                await setClockBLE();
-            } else {
-                showToast("Connect Web Bluetooth to set Clock mode!");
-            }
+            await setClockBLE();
+            toast.success("Clock mode active!", { id: toastId });
         } catch (e: any) {
-            showToast(`Error: ${e.message}`);
+            toast.error(`Error: ${e?.message || 'Failed'}`, { id: toastId });
+        } finally {
+            setIsClockBusy(false);
         }
     };
 
     const handleClearMemory = async () => {
+        if (!bleState.connected) {
+            toast.error("Connect Bluetooth first to clear screen memory!");
+            return;
+        }
+        setIsMemoryBusy(true);
+        const toastId = toast.loading("Clearing display memory...");
         try {
-            if (bleState.connected) {
-                await clearMemoryBLE();
-            } else {
-                showToast("Connect Web Bluetooth to clear memory!");
-            }
+            await clearMemoryBLE();
+            toast.success("Screen memory cleared!", { id: toastId });
         } catch (e: any) {
-            showToast(`Error: ${e.message}`);
+            toast.error(`Error: ${e?.message || 'Failed'}`, { id: toastId });
+        } finally {
+            setIsMemoryBusy(false);
         }
     };
 
     return (
-        <div className="glass-panel p-5 rounded-2xl border border-white/10 space-y-4 mb-6 shadow-xl relative overflow-hidden">
-            {/* Toast Notification Banner */}
-            {bleState.toastMessage && (
-                <div className="absolute top-2 left-1/2 -translate-x-1/2 z-50 px-4 py-2 bg-emerald-500 text-black font-extrabold text-xs rounded-full shadow-2xl flex items-center space-x-2 animate-bounce">
-                    <CheckCircle className="w-4 h-4" />
-                    <span>{bleState.toastMessage}</span>
+        <Card className="p-5 sm:p-6 space-y-5 mb-8 bg-[#201b18] border-[#38302b] shadow-xl rounded-3xl">
+            {/* Header & Bluetooth Pair Bar */}
+            <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-[#38302b]">
+                <div className="flex items-center space-x-3">
+                    <div className="p-2.5 rounded-2xl bg-[#c85a32]/15 text-[#e06b43] border border-[#c85a32]/30">
+                        <Radio className="w-5 h-5" />
+                    </div>
+                    <div>
+                        <div className="flex items-center space-x-2">
+                            <h2 className="font-bold text-sm tracking-wide text-[#f4ebe1]">
+                                SCREEN CONTROLLER
+                            </h2>
+                        </div>
+                        <p className="text-xs text-[#a89b8c]">Send messages & photos live</p>
+                    </div>
                 </div>
-            )}
 
-            {/* Top Bar: Title & Connection / Offline Link Controls */}
-            <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-white/10">
-                <div className="flex items-center space-x-2 text-emerald-400 font-extrabold text-sm tracking-wider uppercase">
-                    <Tv className="w-5 h-5" />
-                    <span>iPixel 96x16 Screen Controls</span>
-                </div>
-
-                <div className="flex items-center gap-3">
-                    {/* Web Bluetooth Connection Button */}
-                    <button
+                <div className="flex items-center gap-2.5">
+                    <Button
+                        variant={bleState.connected ? "amber" : "terracotta"}
+                        size="sm"
                         onClick={handleConnectBLE}
-                        disabled={bleState.isBusy}
-                        className={`flex items-center space-x-2 px-3.5 py-1.5 rounded-xl font-bold text-xs transition-all ${
-                            bleState.connected
-                                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/50 hover:bg-emerald-500/30'
-                                : 'bg-primary/20 text-purple-300 border border-primary/40 hover:bg-primary/30'
-                        }`}
+                        isLoading={isConnectingBLE || bleState.isBusy}
+                        loadingText={bleState.connected ? "Disconnecting..." : "Connecting..."}
+                        className="h-9 px-4 rounded-2xl font-bold"
                     >
                         {bleState.connected ? (
                             <>
-                                <BluetoothConnected className="w-4 h-4 text-emerald-400 animate-pulse" />
-                                <span>{bleState.deviceName || 'BLE Connected'} (Disconnect)</span>
+                                <BluetoothConnected className="w-4 h-4 mr-1.5 animate-pulse" />
+                                <span>{bleState.deviceName || 'Connected'}</span>
                             </>
                         ) : (
                             <>
-                                <Bluetooth className="w-4 h-4 text-purple-400" />
-                                <span>Connect Bluetooth (Web BLE)</span>
+                                <Bluetooth className="w-4 h-4 mr-1.5" />
+                                <span>Pair Bluetooth</span>
                             </>
                         )}
-                    </button>
+                    </Button>
 
-                    {/* Offline Web App Link */}
-                    <a
-                        href="/offline.html"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl font-bold text-xs bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30 transition-all"
-                        title="Open Offline Controller PWA"
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        asChild
+                        className="h-9 px-3.5 rounded-2xl border-[#38302b]"
                     >
-                        <Zap className="w-3.5 h-3.5 text-amber-400" />
-                        <span>Offline Controller Page</span>
-                        <ExternalLink className="w-3 h-3 text-amber-400/70 ml-0.5" />
-                    </a>
+                        <a
+                            href="/offline.html"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center space-x-1.5 text-xs text-[#a89b8c] hover:text-[#f4ebe1]"
+                            title="Open Offline Controller PWA"
+                        >
+                            <Zap className="w-3.5 h-3.5 text-[#d97706]" />
+                            <span>Offline Link</span>
+                        </a>
+                    </Button>
                 </div>
             </div>
 
-            {/* Mode Indicator notice if Web BLE connected */}
+            {/* Connection Banner */}
             {bleState.connected && (
-                <div className="text-[11px] px-3 py-1.5 rounded-lg bg-emerald-950/60 border border-emerald-800/40 text-emerald-300 flex items-center justify-between">
-                    <span>⚡ <b>Direct Web Bluetooth Active</b>: Actions stream directly from your browser over Bluetooth!</span>
-                    {bleState.isBusy && <span className="font-bold animate-pulse text-amber-300">Streaming...</span>}
+                <div className="text-xs px-4 py-2.5 rounded-2xl bg-[#d97706]/15 border border-[#d97706]/30 text-[#f59e0b] flex items-center justify-between font-medium">
+                    <div className="flex items-center space-x-2">
+                        <Flame className="w-4 h-4 text-[#f59e0b] animate-bounce" />
+                        <span><b>Live Bluetooth Link Active</b> — Streaming to screen!</span>
+                    </div>
+                    {bleState.isBusy && <span className="font-bold text-[#f4ebe1]">Streaming...</span>}
                 </div>
             )}
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                {/* Send Text & Instant Phone Photo Control */}
-                <div className="flex flex-col gap-2">
-                    <div className="flex items-center gap-2 bg-black/40 p-2.5 rounded-xl border border-white/5">
-                        <Type className="w-4 h-4 text-white/50 ml-2" />
-                        <input
+            {/* Action Grid */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                {/* Live Text Broadcaster & Quick Photo Streamer */}
+                <div className="flex flex-col gap-3">
+                    <label className="text-[11px] font-bold uppercase tracking-wider text-[#a89b8c] flex items-center">
+                        <Type className="w-3.5 h-3.5 mr-1.5 text-[#c85a32]" />
+                        Send Text Caption
+                    </label>
+
+                    <div className="flex items-center gap-2 bg-[#171311] p-1.5 rounded-2xl border border-[#38302b] focus-within:border-[#c85a32]/60 transition-colors">
+                        <Input
                             type="text"
-                            placeholder="Type live text for display..."
+                            placeholder="Type a quick message..."
                             value={text}
                             onChange={(e) => setText(e.target.value)}
-                            className="bg-transparent text-white text-xs px-2 py-1 outline-none flex-1"
                             onKeyDown={(e) => e.key === 'Enter' && handleSendText()}
+                            className="bg-transparent border-0 h-9 focus-visible:ring-0 text-xs px-2"
                         />
                         <input
                             type="color"
                             value={`#${color}`}
                             onChange={(e) => setColor(e.target.value.replace('#', ''))}
-                            className="w-7 h-7 rounded cursor-pointer border-0 bg-transparent"
+                            className="w-8 h-8 rounded-xl cursor-pointer border-0 bg-transparent shrink-0"
                             title="Text Color"
                         />
-                        <button
+                        <Button
+                            variant="terracotta"
+                            size="sm"
                             onClick={handleSendText}
-                            disabled={isSendingText || !text.trim()}
-                            className="px-3.5 py-2 bg-emerald-500 hover:bg-emerald-400 text-black font-extrabold text-xs rounded-lg transition-colors disabled:opacity-50"
+                            isLoading={isSendingText}
+                            loadingText="Sending..."
+                            disabled={!text.trim()}
+                            className="h-9 px-4 shrink-0 rounded-xl"
                         >
-                            {isSendingText ? 'Sending...' : 'Send Text'}
-                        </button>
+                            Broadcast
+                        </Button>
                     </div>
 
-                    {/* Instant Phone Photo Panning Button */}
-                    <div className="flex items-center">
+                    {/* Instant Phone Photo Streamer */}
+                    <div>
                         <input
                             ref={phoneFileRef}
                             type="file"
@@ -240,57 +295,78 @@ export function ScreenControlBar() {
                             className="hidden"
                             onChange={handlePhonePhotoSelected}
                         />
-                        <button
+                        <Button
+                            variant="moss"
                             onClick={() => phoneFileRef.current?.click()}
-                            disabled={isProcessingPhoneImg || bleState.isBusy}
-                            className="w-full flex items-center justify-center space-x-2 py-2 rounded-xl bg-purple-600/30 hover:bg-purple-600/50 border border-purple-500/40 text-purple-200 font-bold text-xs transition-all disabled:opacity-50 shadow-md"
+                            isLoading={isProcessingPhoneImg}
+                            loadingText="Encoding animation..."
+                            disabled={bleState.isBusy}
+                            className="w-full h-11 text-xs justify-center font-bold rounded-2xl"
                         >
-                            <Film className="w-4 h-4 text-purple-400" />
-                            <span>{isProcessingPhoneImg ? 'Generating Panning GIF...' : '📱 Stream Phone Photo (Instant 96x16 Panning GIF)'}</span>
-                        </button>
+                            <Camera className="w-4 h-4 mr-2" />
+                            <span>📷 Stream Photo from Phone</span>
+                        </Button>
                     </div>
                 </div>
 
-                {/* Brightness & Quick Controls */}
-                <div className="flex flex-col justify-between bg-black/40 p-2.5 rounded-xl border border-white/5">
-                    <div className="flex flex-wrap items-center gap-3 justify-between">
-                        <div className="flex items-center space-x-1 text-xs text-white/70 font-bold">
-                            <Sun className="w-4 h-4 text-yellow-400 mr-1" />
+                {/* Display Controls Deck */}
+                <div className="flex flex-col justify-between bg-[#171311] p-4 rounded-2xl border border-[#38302b] gap-4">
+                    <label className="text-[11px] font-bold uppercase tracking-wider text-[#a89b8c] flex items-center">
+                        <Sliders className="w-3.5 h-3.5 mr-1.5 text-[#6b7c4d]" />
+                        Screen Tuning & Controls
+                    </label>
+
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="flex items-center space-x-1.5 text-xs text-[#e6d7c3] font-bold">
+                            <Sun className="w-4 h-4 text-[#d97706] mr-0.5" />
                             <span>Brightness:</span>
                         </div>
-                        <div className="flex gap-1.5">
+
+                        <div className="flex gap-2">
                             {[25, 50, 75, 100].map((level) => (
-                                <button
+                                <Button
                                     key={level}
+                                    variant="outline"
+                                    size="sm"
                                     onClick={() => handleSetBrightness(level)}
-                                    className="px-2.5 py-1 bg-white/10 hover:bg-white/20 text-white font-bold text-xs rounded transition-colors"
+                                    isLoading={activeBrightness === level}
+                                    className="h-8 px-3 text-xs rounded-xl font-bold bg-[#201b18]"
                                 >
                                     {level}%
-                                </button>
+                                </Button>
                             ))}
                         </div>
-
-                        {bleState.connected && (
-                            <div className="flex gap-1.5 border-l border-white/10 pl-2">
-                                <button
-                                    onClick={handleSetClock}
-                                    className="p-1.5 rounded bg-white/10 hover:bg-white/20 text-white/80 transition-colors"
-                                    title="Clock Mode"
-                                >
-                                    <Clock className="w-3.5 h-3.5 text-cyan-400" />
-                                </button>
-                                <button
-                                    onClick={handleClearMemory}
-                                    className="p-1.5 rounded bg-white/10 hover:bg-white/20 text-white/80 transition-colors"
-                                    title="Clear Screen Memory"
-                                >
-                                    <Trash2 className="w-3.5 h-3.5 text-red-400" />
-                                </button>
-                            </div>
-                        )}
                     </div>
+
+                    {bleState.connected && (
+                        <div className="flex items-center justify-between pt-3 border-t border-[#38302b] gap-2">
+                            <span className="text-xs text-[#a89b8c]">Quick Modes:</span>
+                            <div className="flex gap-2">
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={handleSetClock}
+                                    isLoading={isClockBusy}
+                                    className="h-8 text-xs rounded-xl text-[#e6d7c3]"
+                                >
+                                    <Clock className="w-3.5 h-3.5 mr-1.5 text-[#d97706]" />
+                                    Clock Mode
+                                </Button>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={handleClearMemory}
+                                    isLoading={isMemoryBusy}
+                                    className="h-8 text-xs rounded-xl text-[#e65c53]"
+                                >
+                                    <Trash2 className="w-3.5 h-3.5 mr-1.5 text-[#99332c]" />
+                                    Clear Memory
+                                </Button>
+                            </div>
+                        </div>
+                    )}
                 </div>
             </div>
-        </div>
+        </Card>
     );
 }

@@ -1,13 +1,17 @@
 'use client';
 
-import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { UploadZone } from './UploadZone';
 import { ImageCard } from './ImageCard';
-import { Modal } from './Modal';
 import { ScreenControlBar } from './ScreenControlBar';
-import { Folder, Plus, X, Lock, Tag as TagIcon, Download, AlertTriangle, Trash2, Zap } from 'lucide-react';
+import { Folder, Plus, X, Lock, Tag as TagIcon, Download, Trash2, ShieldCheck } from 'lucide-react';
 import { createFolder, uploadImage, deleteFolder, checkAdminPassword, updateImageTags, deleteImage } from '@/app/actions';
 import { useRouter } from 'next/navigation';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
+import { toast } from 'sonner';
 
 type DashboardProps = {
     initialData: any;
@@ -32,8 +36,9 @@ export default function Dashboard({ initialData }: DashboardProps) {
 
     // Modal State Central
     const [activeModal, setActiveModal] = useState<ModalType>(null);
-    const [modalData, setModalData] = useState<any>(null); // Stores target image/folder
+    const [modalData, setModalData] = useState<any>(null);
     const [inputValue, setInputValue] = useState("");
+    const [isModalSubmitting, setIsModalSubmitting] = useState(false);
 
     const inputRef = useRef<HTMLInputElement>(null);
     const router = useRouter();
@@ -48,7 +53,7 @@ export default function Dashboard({ initialData }: DashboardProps) {
         }
     }, [activeModal]);
 
-    // Reset clicks
+    // Reset title secret clicks for admin mode
     useEffect(() => {
         if (titleClicks > 0 && titleClicks < 5) {
             const timer = setTimeout(() => setTitleClicks(0), 1000);
@@ -89,90 +94,101 @@ export default function Dashboard({ initialData }: DashboardProps) {
         setActiveModal(type);
         setModalData(data);
         setInputValue("");
+        setIsModalSubmitting(false);
     };
 
     const closeModal = () => {
+        if (isModalSubmitting) return;
         setActiveModal(null);
         setModalData(null);
         setInputValue("");
+        setIsModalSubmitting(false);
     };
 
     const handleModalSubmit = async () => {
-        switch (activeModal) {
-            case 'admin-auth':
-                const isValid = await checkAdminPassword(inputValue);
-                if (isValid) {
-                    setIsAdmin(true);
-                    // alert("Admin Mode Unlocked!"); // Maybe use a toast later? for now silent success is fine or visual cue
-                } else {
-                    alert("Incorrect Password");
-                }
-                closeModal();
-                break;
-
-            case 'create-folder':
-                if (inputValue.trim()) {
-                    const newFolder = await createFolder(inputValue.trim());
-                    setData((prev: any) => ({ ...prev, folders: [...prev.folders, newFolder] }));
-                    router.refresh();
-                }
-                closeModal();
-                break;
-
-            case 'add-tag':
-                if (inputValue.trim() && modalData) {
-                    const tag = inputValue.trim().toUpperCase();
-                    const newTags = [...(modalData.tags || [])];
-                    if (!newTags.includes(tag)) newTags.push(tag);
-
-                    // Optimistic update local
-                    const updatedImg = { ...modalData, tags: newTags };
-                    setData((prev: any) => ({
-                        ...prev,
-                        images: prev.images.map((img: any) => img.id === modalData.id ? updatedImg : img)
-                    }));
-
-                    await updateImageTags(modalData.id, newTags);
-                    router.refresh();
-                }
-                closeModal();
-                break;
-
-            case 'delete-image':
-                if (modalData) {
-                    const result = await deleteImage(modalData.id);
-                    if (result && !result.success) {
-                        alert(`Failed to delete: ${result.error}`);
-                        // Force refresh to get back the optimistic update
-                        router.refresh();
+        setIsModalSubmitting(true);
+        try {
+            switch (activeModal) {
+                case 'admin-auth':
+                    const isValid = await checkAdminPassword(inputValue);
+                    if (isValid) {
+                        setIsAdmin(true);
+                        toast.success("Admin Mode Unlocked!");
                     } else {
-                        setData((prev: any) => ({
-                            ...prev,
-                            images: prev.images.filter((img: any) => img.id !== modalData.id)
-                        }));
+                        toast.error("Incorrect Admin Password");
+                    }
+                    closeModal();
+                    break;
+
+                case 'create-folder':
+                    if (inputValue.trim()) {
+                        const newFolder = await createFolder(inputValue.trim());
+                        setData((prev: any) => ({ ...prev, folders: [...prev.folders, newFolder] }));
+                        toast.success(`Folder "${inputValue.trim()}" created`);
                         router.refresh();
                     }
-                }
-                closeModal();
-                break;
+                    closeModal();
+                    break;
 
-            case 'delete-folder':
-                if (modalData) {
-                    await deleteFolder(modalData); // modalData is folderId here
-                    setData((prev: any) => ({
-                        ...prev,
-                        folders: prev.folders.filter((f: any) => f.id !== modalData)
-                    }));
-                    if (activeFolderId === modalData) setActiveFolderId(null);
-                    router.refresh();
-                }
-                closeModal();
-                break;
+                case 'add-tag':
+                    if (inputValue.trim() && modalData) {
+                        const tag = inputValue.trim().toUpperCase();
+                        const newTags = [...(modalData.tags || [])];
+                        if (!newTags.includes(tag)) newTags.push(tag);
+
+                        const updatedImg = { ...modalData, tags: newTags };
+                        setData((prev: any) => ({
+                            ...prev,
+                            images: prev.images.map((img: any) => img.id === modalData.id ? updatedImg : img)
+                        }));
+
+                        await updateImageTags(modalData.id, newTags);
+                        toast.success(`Tag "${tag}" added`);
+                        router.refresh();
+                    }
+                    closeModal();
+                    break;
+
+                case 'delete-image':
+                    if (modalData) {
+                        const result = await deleteImage(modalData.id);
+                        if (result && !result.success) {
+                            toast.error(`Failed to delete: ${result.error}`);
+                            router.refresh();
+                        } else {
+                            setData((prev: any) => ({
+                                ...prev,
+                                images: prev.images.filter((img: any) => img.id !== modalData.id)
+                            }));
+                            toast.success("Image deleted");
+                            router.refresh();
+                        }
+                    }
+                    closeModal();
+                    break;
+
+                case 'delete-folder':
+                    if (modalData) {
+                        await deleteFolder(modalData);
+                        setData((prev: any) => ({
+                            ...prev,
+                            folders: prev.folders.filter((f: any) => f.id !== modalData)
+                        }));
+                        if (activeFolderId === modalData) setActiveFolderId(null);
+                        toast.success("Folder deleted");
+                        router.refresh();
+                    }
+                    closeModal();
+                    break;
+            }
+        } catch (err: any) {
+            toast.error(`Operation failed: ${err?.message || 'Error'}`);
+        } finally {
+            setIsModalSubmitting(false);
         }
     };
 
-
-    // Handlers passed to children
+    // Handlers
     const handleUpload = async (formData: FormData) => {
         const newImage = await uploadImage(formData, activeFolderId);
         setData((prev: any) => ({
@@ -184,6 +200,7 @@ export default function Dashboard({ initialData }: DashboardProps) {
 
     const handleExport = async () => {
         setIsExporting(true);
+        const toastId = toast.loading("Generating ZIP export...");
         try {
             const response = await fetch('/api/export', {
                 method: 'POST',
@@ -193,367 +210,413 @@ export default function Dashboard({ initialData }: DashboardProps) {
 
             if (!response.ok) {
                 const err = await response.json();
-                alert(`Export failed: ${err.error || 'Unknown Error'}`);
+                toast.error(`Export failed: ${err.error || 'Unknown Error'}`, { id: toastId });
                 return;
             }
 
-            // Trigger Download
             const blob = await response.blob();
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `gifs_export_${Date.now()}.zip`; // Suggest filename
+            a.download = `boogie_board_export_${Date.now()}.zip`;
             document.body.appendChild(a);
             a.click();
             window.URL.revokeObjectURL(url);
             document.body.removeChild(a);
 
+            toast.success("ZIP Export downloaded!", { id: toastId });
             closeModal();
-        } catch (error) {
+        } catch (error: any) {
             console.error(error);
-            alert("Failed to export GIFs.");
+            toast.error("Failed to export GIFs.", { id: toastId });
         } finally {
             setIsExporting(false);
         }
     };
 
-    // Effect to clear selected tag if it no longer exists in current view? 
-    // Optional, but good UX.
     useEffect(() => {
         if (selectedTag && !uniqueTags.includes(selectedTag)) {
             setSelectedTag(null);
         }
     }, [uniqueTags, selectedTag]);
 
-
     return (
-        <div className="max-w-7xl mx-auto space-y-8">
+        <div className="max-w-7xl mx-auto space-y-8 py-8 px-4 sm:px-6">
 
-            {/* Header */}
-            <header className="flex items-center justify-between mb-8 animate-float">
-                <h1
-                    onClick={() => setTitleClicks(p => p + 1)}
-                    className="text-5xl font-black tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-primary via-accent to-secondary drop-shadow-[0_0_15px_rgba(112,0,255,0.5)] cursor-default select-none transition-transform active:scale-95"
-                >
-                    GIF BOARD
-                </h1>
-                {isAdmin && (
-                    <div className="px-4 py-1 rounded-full bg-red-500/20 text-red-500 font-bold border border-red-500/50 flex items-center space-x-2 animate-pulse">
-                        <Lock className="w-4 h-4" />
-                        <span>ADMIN MODE</span>
+            {/* Studio Header */}
+            <header className="flex flex-wrap items-center justify-between gap-4 mb-2">
+                <div className="flex items-center space-x-3.5">
+                    <div className="w-10 h-10 rounded-2xl bg-[#c85a32] flex items-center justify-center text-[#fbf7f2] shadow-md shadow-[#c85a32]/20 font-black text-xl">
+                        B
                     </div>
-                )}
-                <div className="flex items-center space-x-3 ml-4">
-                    <a
-                        href="/offline.html"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="px-4 py-2.5 rounded-full glass-panel hover:bg-white/10 text-amber-300 font-bold text-xs flex items-center space-x-2 transition-all border border-amber-500/30 hover:border-amber-500/60 shadow-lg"
-                        title="Offline PWA Controller"
-                    >
-                        <Zap className="w-4 h-4 text-amber-400" />
-                        <span>Offline App</span>
-                    </a>
-                    <button
-                        onClick={() => openModal('export-settings')}
-                        className="p-3 rounded-full glass-panel hover:bg-white/10 text-white/70 hover:text-white transition-colors"
-                        title="Export GIFs"
-                    >
-                        <Download className="w-5 h-5" />
-                    </button>
+                    <div>
+                        <h1
+                            onClick={() => setTitleClicks(p => p + 1)}
+                            className="text-3xl sm:text-4xl font-extrabold tracking-tight text-[#f4ebe1] cursor-pointer select-none transition-transform active:scale-95"
+                        >
+                            Boogie Board
+                        </h1>
+                        <p className="text-xs text-[#a89b8c] font-medium tracking-wide">
+                            Send photos and captions to the screen live
+                        </p>
+                    </div>
                 </div>
+
+                {isAdmin && (
+                    <Badge variant="destructive" className="px-3.5 py-1.5 text-xs font-bold space-x-2 rounded-2xl">
+                        <ShieldCheck className="w-4 h-4 text-white" />
+                        <span>ADMIN MODE UNLOCKED</span>
+                    </Badge>
+                )}
             </header>
 
-            {/* Live Screen Control Bar */}
+            {/* Screen Control Deck */}
             <ScreenControlBar />
 
-            {/* Folders Bar */}
-            <div className="flex space-x-4 overflow-x-auto p-2 pb-4 scrollbar-hide">
-                <button
-                    onClick={() => setActiveFolderId(null)}
-                    className={`flex items-center space-x-2 px-6 py-3 rounded-xl transition-all duration-300 ${activeFolderId === null
-                        ? 'bg-gradient-to-r from-primary to-accent shadow-[0_0_20px_rgba(255,0,222,0.4)] scale-105'
-                        : 'glass-panel hover:bg-white/5'
-                        }`}
+            {/* Folder Navigation Toolbar */}
+            <div className="flex flex-wrap items-center justify-between gap-4 pb-3 border-b border-[#38302b]">
+                {/* Folder Pills */}
+                <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                        variant={activeFolderId === null ? "sand" : "outline"}
+                        size="sm"
+                        onClick={() => setActiveFolderId(null)}
+                        className="h-9 text-xs rounded-2xl font-bold"
+                    >
+                        <Folder className="w-3.5 h-3.5 mr-1.5" />
+                        <span>All Visuals ({data.images.length})</span>
+                    </Button>
+
+                    {data.folders.map((folder: any) => {
+                        const count = data.images.filter((img: any) => img.folderId === folder.id).length;
+                        const isActive = activeFolderId === folder.id;
+
+                        return (
+                            <div key={folder.id} className="relative group/folder flex items-center">
+                                <Button
+                                    variant={isActive ? "sand" : "outline"}
+                                    size="sm"
+                                    onClick={() => setActiveFolderId(folder.id)}
+                                    className="h-9 text-xs rounded-2xl pr-7 font-bold"
+                                >
+                                    <Folder className="w-3.5 h-3.5 mr-1.5" />
+                                    <span>{folder.name} ({count})</span>
+                                </Button>
+                                {isAdmin && (
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            openModal('delete-folder', folder.id);
+                                        }}
+                                        className="absolute right-1.5 p-1 text-[#a89b8c] hover:text-[#99332c] transition-colors"
+                                        title="Delete Folder"
+                                    >
+                                        <X className="w-3 h-3" />
+                                    </button>
+                                )}
+                            </div>
+                        );
+                    })}
+
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => openModal('create-folder')}
+                        className="h-9 text-xs rounded-2xl border-dashed border-[#38302b] text-[#c85a32] hover:bg-[#28221e]"
+                    >
+                        <Plus className="w-3.5 h-3.5 mr-1" />
+                        <span>New Folder</span>
+                    </Button>
+                </div>
+
+                {/* Export ZIP Action */}
+                <Button
+                    variant="moss"
+                    size="sm"
+                    onClick={() => openModal('export-settings')}
+                    className="h-9 text-xs font-bold rounded-2xl"
                 >
-                    <Folder className="w-5 h-5" />
-                    <span className="font-bold">All</span>
-                </button>
-
-                {data.folders.map((folder: any) => (
-                    <div key={folder.id} className="relative group">
-                        <button
-                            onClick={() => setActiveFolderId(folder.id)}
-                            className={`flex items-center space-x-2 px-6 py-3 rounded-xl transition-all duration-300 whitespace-nowrap ${isAdmin ? 'pr-10' : ''} ${activeFolderId === folder.id
-                                ? 'bg-gradient-to-r from-primary to-accent shadow-[0_0_20px_rgba(255,0,222,0.4)] scale-105'
-                                : 'glass-panel hover:bg-white/5'
-                                }`}
-                        >
-                            <Folder className="w-5 h-5" />
-                            <span className="font-bold">{folder.name}</span>
-                        </button>
-
-                        {isAdmin && (
-                            <button
-                                onClick={(e) => { e.stopPropagation(); openModal('delete-folder', folder.id); }}
-                                className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-full hover:bg-red-500/80 hover:text-white text-white/50 transition-colors z-10"
-                                title="Delete Folder"
-                            >
-                                <X className="w-3 h-3" />
-                            </button>
-                        )}
-                    </div>
-                ))}
-
-                <button
-                    onClick={() => openModal('create-folder')}
-                    className="flex items-center space-x-2 px-4 py-3 rounded-xl glass-panel hover:bg-white/10 text-secondary border-secondary/30 border-dashed border-2"
-                >
-                    <Plus className="w-5 h-5" />
-                    <span>New Folder</span>
-                </button>
+                    <Download className="w-3.5 h-3.5 mr-1.5" />
+                    <span>Export ZIP</span>
+                </Button>
             </div>
 
-            {/* Tag Filter Bar */}
+            {/* Tag Filters */}
             {uniqueTags.length > 0 && (
-                <div className="flex items-center space-x-3 overflow-x-auto pb-2">
-                    <div className="flex items-center text-white/50 text-sm font-bold uppercase tracking-wider">
-                        <TagIcon className="w-4 h-4 mr-2" />
-                        Filters:
-                    </div>
-                    <button
+                <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs font-bold text-[#a89b8c] flex items-center mr-1">
+                        <TagIcon className="w-3.5 h-3.5 mr-1 text-[#c85a32]" />
+                        Tags:
+                    </span>
+                    <Button
+                        variant={selectedTag === null ? "sand" : "outline"}
+                        size="sm"
                         onClick={() => setSelectedTag(null)}
-                        className={`px-3 py-1 rounded-full text-xs font-bold transition-colors ${!selectedTag ? 'bg-white text-black' : 'bg-white/10 text-white hover:bg-white/20'}`}
+                        className="h-6 px-3 text-[10px] rounded-full"
                     >
-                        ALL
-                    </button>
-                    {uniqueTags.map(tag => (
-                        <button
+                        All
+                    </Button>
+                    {uniqueTags.map((tag) => (
+                        <Button
                             key={tag}
+                            variant={selectedTag === tag ? "terracotta" : "outline"}
+                            size="sm"
                             onClick={() => setSelectedTag(selectedTag === tag ? null : tag)}
-                            className={`px-3 py-1 rounded-full text-xs font-bold transition-colors uppercase ${selectedTag === tag ? 'bg-accent text-white shadow-[0_0_10px_rgba(255,0,222,0.5)]' : 'bg-white/10 text-white hover:bg-white/20'}`}
+                            className="h-6 px-3 text-[10px] rounded-full"
                         >
                             {tag}
-                        </button>
+                        </Button>
                     ))}
                 </div>
             )}
 
-            {/* Main Content */}
-            <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
+            {/* Upload Drag & Drop Area */}
+            <UploadZone onUpload={handleUpload} existingNames={existingNames} />
 
-                {/* Upload Column */}
-                <div className="lg:col-span-4">
-                    <UploadZone onUpload={handleUpload} existingNames={existingNames} />
-                </div>
-
-                {/* Gallery */}
-                <div className="lg:col-span-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-6">
-                    {filteredImages.map((img: any) => (
-                        <ImageCard
-                            key={img.id}
-                            image={img}
-                            folders={data.folders}
-                            onPreview={(img) => openModal('preview', img)}
-                            onAddTag={(img) => openModal('add-tag', img)}
-                            onDelete={(img) => openModal('delete-image', img)}
-                        />
-                    ))}
-
-                    {filteredImages.length === 0 && (
-                        <div className="col-span-full h-64 flex items-center justify-center text-white/30 font-mono text-xl border-2 border-dashed border-white/10 rounded-3xl">
-                            {imagesInFolder.length > 0 ? "No images match this tag." : "No images here yet. Drop one above!"}
-                        </div>
-                    )}
-                </div>
+            {/* Image Cards Grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 pt-4">
+                {filteredImages.map((img: any) => (
+                    <ImageCard
+                        key={img.id}
+                        image={img}
+                        folders={data.folders}
+                        onPreview={(image) => openModal('preview', image)}
+                        onAddTag={(image) => openModal('add-tag', image)}
+                        onDelete={(image) => openModal('delete-image', image)}
+                    />
+                ))}
             </div>
 
-            {/* --------------------- MODAL MANAGER --------------------- */}
-            <Modal
-                isOpen={!!activeModal}
-                onClose={closeModal}
-                title={
-                    activeModal === 'admin-auth' ? "Admin Access" :
-                        activeModal === 'create-folder' ? "Create Folder" :
-                            activeModal === 'add-tag' ? "Add Tag" :
-                                activeModal === 'delete-folder' ? "Delete Folder" :
-                                    activeModal === 'delete-image' ? "Delete Image" :
-                                        activeModal === 'preview' ? (modalData?.name || "Preview") :
-                                            activeModal === 'export-settings' ? "Export GIFs" : ""
-                }
-                maxWidth={activeModal === 'preview' ? 'max-w-5xl' : 'max-w-md'}
-            >
-                {activeModal === 'export-settings' ? (
-                    // --- Export Modal ---
-                    <div className="space-y-6">
-                        <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-2 custom-scrollbar">
-                            {/* Toggle All */}
-                            <label className="flex items-center space-x-3 p-3 rounded-lg bg-white/5 hover:bg-white/10 cursor-pointer">
-                                <input
-                                    type="checkbox"
-                                    checked={exportFilters.includeAll}
-                                    onChange={(e) => setExportFilters(prev => ({ ...prev, includeAll: e.target.checked }))}
-                                    className="w-5 h-5 rounded border-white/20 bg-black/50 text-primary focus:ring-primary"
-                                />
-                                <span className="font-bold text-white">Export Everything</span>
-                            </label>
+            {filteredImages.length === 0 && (
+                <div className="text-center py-16 border border-dashed border-[#38302b] rounded-3xl bg-[#171311]">
+                    <p className="text-[#a89b8c] text-xs font-medium">No visual assets found in this view.</p>
+                </div>
+            )}
 
-                            {!exportFilters.includeAll && (
-                                <>
-                                    {/* Folders */}
-                                    <div>
-                                        <h4 className="text-xs font-bold text-white/50 uppercase tracking-wider mb-2">Folders</h4>
-                                        <div className="grid grid-cols-2 gap-2">
-                                            {data.folders.map((f: any) => (
-                                                <label key={f.id} className="flex items-center space-x-2 p-2 rounded bg-black/30 hover:bg-white/5 cursor-pointer">
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={exportFilters.folderIds.includes(f.id)}
-                                                        onChange={(e) => {
-                                                            const checked = e.target.checked;
-                                                            setExportFilters(prev => ({
-                                                                ...prev,
-                                                                folderIds: checked
-                                                                    ? [...prev.folderIds, f.id]
-                                                                    : prev.folderIds.filter(id => id !== f.id)
-                                                            }));
-                                                        }}
-                                                        className="rounded border-white/20 bg-black text-primary"
-                                                    />
-                                                    <span className="text-sm truncate">{f.name}</span>
-                                                </label>
-                                            ))}
-                                        </div>
-                                    </div>
+            {/* Centralized Dialog Modals */}
 
-                                    {/* Tags */}
-                                    {uniqueTags.length > 0 && (
-                                        <div>
-                                            <h4 className="text-xs font-bold text-white/50 uppercase tracking-wider mb-2">Filter by Tag</h4>
-                                            <div className="flex flex-wrap gap-2">
-                                                {uniqueTags.map(tag => (
-                                                    <label key={tag} className={`px-2 py-1 rounded text-xs font-bold cursor-pointer transition-colors border border-white/10 ${exportFilters.tags.includes(tag) ? 'bg-primary text-white' : 'bg-black/50 text-white/50 hover:bg-white/10'}`}>
-                                                        <input
-                                                            type="checkbox"
-                                                            className="hidden"
-                                                            checked={exportFilters.tags.includes(tag)}
-                                                            onChange={(e) => {
-                                                                const checked = e.target.checked;
-                                                                setExportFilters(prev => ({
-                                                                    ...prev,
-                                                                    tags: checked
-                                                                        ? [...prev.tags, tag]
-                                                                        : prev.tags.filter(t => t !== tag)
-                                                                }));
-                                                            }}
-                                                        />
-                                                        {tag}
-                                                    </label>
-                                                ))}
-                                            </div>
+            {/* Admin Password Modal */}
+            <Dialog open={activeModal === 'admin-auth'} onOpenChange={(open) => !open && closeModal()}>
+                <DialogContent className="max-w-md bg-[#1c1815] border-[#38302b] text-[#f4ebe1] rounded-3xl">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center space-x-2">
+                            <Lock className="w-5 h-5 text-[#c85a32]" />
+                            <span>Unlock Admin Mode</span>
+                        </DialogTitle>
+                        <DialogDescription>
+                            Enter passkey to manage folders and system settings.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="py-2">
+                        <Input
+                            ref={inputRef}
+                            type="password"
+                            placeholder="Enter password..."
+                            value={inputValue}
+                            onChange={(e) => setInputValue(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && handleModalSubmit()}
+                        />
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={closeModal} disabled={isModalSubmitting}>
+                            Cancel
+                        </Button>
+                        <Button variant="terracotta" onClick={handleModalSubmit} isLoading={isModalSubmitting} loadingText="Authenticating...">
+                            Unlock
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Create Folder Modal */}
+            <Dialog open={activeModal === 'create-folder'} onOpenChange={(open) => !open && closeModal()}>
+                <DialogContent className="max-w-md bg-[#1c1815] border-[#38302b] text-[#f4ebe1] rounded-3xl">
+                    <DialogHeader>
+                        <DialogTitle>Create New Folder</DialogTitle>
+                        <DialogDescription>Group your images by collection.</DialogDescription>
+                    </DialogHeader>
+                    <div className="py-2">
+                        <Input
+                            ref={inputRef}
+                            type="text"
+                            placeholder="Folder Name..."
+                            value={inputValue}
+                            onChange={(e) => setInputValue(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && handleModalSubmit()}
+                        />
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={closeModal} disabled={isModalSubmitting}>
+                            Cancel
+                        </Button>
+                        <Button variant="terracotta" onClick={handleModalSubmit} isLoading={isModalSubmitting} loadingText="Creating...">
+                            Create Folder
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Add Tag Modal */}
+            <Dialog open={activeModal === 'add-tag'} onOpenChange={(open) => !open && closeModal()}>
+                <DialogContent className="max-w-md bg-[#1c1815] border-[#38302b] text-[#f4ebe1] rounded-3xl">
+                    <DialogHeader>
+                        <DialogTitle>Add Tag</DialogTitle>
+                        <DialogDescription>
+                            Categorize "{modalData?.name || modalData?.originalName}".
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="py-2">
+                        <Input
+                            ref={inputRef}
+                            type="text"
+                            placeholder="e.g. PATTERN"
+                            value={inputValue}
+                            onChange={(e) => setInputValue(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && handleModalSubmit()}
+                        />
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={closeModal} disabled={isModalSubmitting}>
+                            Cancel
+                        </Button>
+                        <Button variant="terracotta" onClick={handleModalSubmit} isLoading={isModalSubmitting} loadingText="Adding Tag...">
+                            Add Tag
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Delete Image Confirmation Modal */}
+            <Dialog open={activeModal === 'delete-image'} onOpenChange={(open) => !open && closeModal()}>
+                <DialogContent className="max-w-md bg-[#1c1815] border-[#38302b] text-[#f4ebe1] rounded-3xl">
+                    <DialogHeader>
+                        <DialogTitle className="text-[#e65c53]">Delete Image</DialogTitle>
+                        <DialogDescription>
+                            Are you sure you want to delete "{modalData?.name || modalData?.originalName}"?
+                        </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter className="gap-2">
+                        <Button variant="outline" onClick={closeModal} disabled={isModalSubmitting}>
+                            Cancel
+                        </Button>
+                        <Button variant="destructive" onClick={handleModalSubmit} isLoading={isModalSubmitting} loadingText="Deleting...">
+                            Delete Image
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Delete Folder Confirmation Modal */}
+            <Dialog open={activeModal === 'delete-folder'} onOpenChange={(open) => !open && closeModal()}>
+                <DialogContent className="max-w-md bg-[#1c1815] border-[#38302b] text-[#f4ebe1] rounded-3xl">
+                    <DialogHeader>
+                        <DialogTitle className="text-[#e65c53]">Delete Folder</DialogTitle>
+                        <DialogDescription>
+                            Are you sure you want to delete this folder? Images will be moved to the main library.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter className="gap-2">
+                        <Button variant="outline" onClick={closeModal} disabled={isModalSubmitting}>
+                            Cancel
+                        </Button>
+                        <Button variant="destructive" onClick={handleModalSubmit} isLoading={isModalSubmitting} loadingText="Deleting...">
+                            Delete Folder
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Image Preview Modal */}
+            <Dialog open={activeModal === 'preview'} onOpenChange={(open) => !open && closeModal()}>
+                <DialogContent className="max-w-3xl bg-[#1c1815] border-[#38302b] text-[#f4ebe1] p-4 rounded-3xl">
+                    <DialogHeader>
+                        <DialogTitle>{modalData?.name || modalData?.originalName}</DialogTitle>
+                    </DialogHeader>
+                    <div className="flex flex-col items-center justify-center p-4">
+                        {modalData?.gifUrl ? (
+                            /* eslint-disable-next-line @next/next/no-img-element */
+                            <img src={modalData.gifUrl} className="max-h-[70vh] rounded-2xl object-contain border border-[#38302b]" alt="GIF Preview" />
+                        ) : modalData?.url ? (
+                            /* eslint-disable-next-line @next/next/no-img-element */
+                            <img src={modalData.url} className="max-h-[70vh] rounded-2xl object-contain border border-[#38302b]" alt="Image Preview" />
+                        ) : null}
+                    </div>
+                </DialogContent>
+            </Dialog>
+
+            {/* Export Settings Modal */}
+            <Dialog open={activeModal === 'export-settings'} onOpenChange={(open) => !open && closeModal()}>
+                <DialogContent className="max-w-lg bg-[#1c1815] border-[#38302b] text-[#f4ebe1] rounded-3xl">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center space-x-2">
+                            <Download className="w-5 h-5 text-[#6b7c4d]" />
+                            <span>Export Boogie Board GIFs</span>
+                        </DialogTitle>
+                        <DialogDescription>
+                            Bundle your generated animations into a downloadable ZIP archive.
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    <div className="space-y-4 py-2">
+                        <div>
+                            <label className="block text-xs font-bold text-[#a89b8c] mb-2 uppercase">Select Folders</label>
+                            <div className="grid grid-cols-2 gap-2 max-h-40 overflow-y-auto pr-1">
+                                {data.folders.map((f: any) => {
+                                    const isSelected = exportFilters.folderIds.includes(f.id);
+                                    return (
+                                        <div
+                                            key={f.id}
+                                            onClick={() => {
+                                                setExportFilters(prev => ({
+                                                    ...prev,
+                                                    includeAll: false,
+                                                    folderIds: isSelected
+                                                        ? prev.folderIds.filter(id => id !== f.id)
+                                                        : [...prev.folderIds, f.id]
+                                                }));
+                                            }}
+                                            className={`p-2.5 rounded-2xl border text-xs font-bold flex items-center justify-between cursor-pointer transition-colors ${isSelected
+                                                ? 'bg-[#c85a32]/20 border-[#c85a32] text-[#f4ebe1]'
+                                                : 'bg-[#171311] border-[#38302b] text-[#a89b8c] hover:bg-[#201b18]'
+                                                }`}
+                                        >
+                                            <span className="truncate">{f.name}</span>
+                                            {isSelected && <Badge variant="terracotta" className="text-[9px]">Selected</Badge>}
                                         </div>
-                                    )}
-                                </>
-                            )}
+                                    );
+                                })}
+                            </div>
                         </div>
 
-                        <button
+                        <div className="flex items-center justify-between pt-2 border-t border-[#38302b]">
+                            <span className="text-xs font-bold text-[#e6d7c3]">Include All Folders</span>
+                            <Button
+                                variant={exportFilters.includeAll ? "moss" : "outline"}
+                                size="sm"
+                                onClick={() => setExportFilters(prev => ({ ...prev, includeAll: !prev.includeAll, folderIds: [] }))}
+                                className="h-7 text-xs rounded-xl"
+                            >
+                                {exportFilters.includeAll ? "All Included" : "Select All"}
+                            </Button>
+                        </div>
+                    </div>
+
+                    <DialogFooter className="gap-2">
+                        <Button variant="outline" onClick={closeModal} disabled={isExporting}>
+                            Cancel
+                        </Button>
+                        <Button
+                            variant="moss"
                             onClick={handleExport}
-                            disabled={isExporting}
-                            className="w-full py-3 rounded-xl bg-secondary text-black font-bold hover:bg-secondary/80 transition-colors shadow-lg flex items-center justify-center space-x-2 disabled:opacity-50"
+                            isLoading={isExporting}
+                            loadingText="Downloading ZIP..."
                         >
-                            {isExporting ? <div className="animate-spin w-4 h-4 border-2 border-black border-t-transparent rounded-full" /> : <Download className="w-4 h-4" />}
-                            <span>{isExporting ? "Zipping..." : "Download ZIP"}</span>
-                        </button>
-                    </div>
-                ) : activeModal === 'preview' ? (
-                    // --- Preview Modal Content ---
-                    <div className="flex flex-col items-center">
-                        <div className="w-full bg-black/50 rounded-xl overflow-hidden border border-white/10 mb-6 flex items-center justify-center min-h-[50vh]">
-                            {modalData?.gifUrl ? (
-                                // eslint-disable-next-line @next/next/no-img-element
-                                <img
-                                    src={modalData.gifUrl}
-                                    className="w-full h-full object-contain max-h-[70vh]"
-                                    style={{ imageRendering: 'pixelated' }}
-                                    alt="preview"
-                                />
-                            ) : (
-                                <div className="text-white/50">Preview not available</div>
-                            )}
-                        </div>
-                        <a
-                            href={modalData?.gifUrl}
-                            download={`${modalData?.name || 'animation'}.gif`}
-                            className="px-8 py-3 rounded-full bg-secondary text-black font-bold hover:bg-secondary/80 transition-all flex items-center space-x-2"
-                        >
-                            <Download className="w-5 h-5" />
-                            <span>Download GIF</span>
-                        </a>
-                    </div>
-                ) : (activeModal === 'delete-folder' || activeModal === 'delete-image') ? (
-                    // --- Delete Confirmation Content ---
-                    <div className="space-y-6 text-center">
-                        <div className="mx-auto w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center text-red-500 animate-pulse">
-                            <AlertTriangle className="w-8 h-8" />
-                        </div>
-                        <div>
-                            <p className="text-white/80">
-                                {activeModal === 'delete-folder'
-                                    ? "Are you sure? Images in this folder will be moved to 'All'."
-                                    : "Permanently delete this image? This cannot be undone."}
-                            </p>
-                        </div>
-                        <div className="flex space-x-3">
-                            <button
-                                onClick={closeModal}
-                                className="flex-1 py-3 rounded-xl font-bold text-white/50 hover:bg-white/5 hover:text-white transition-colors"
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                onClick={handleModalSubmit}
-                                className="flex-1 py-3 rounded-xl bg-red-500 text-white font-bold hover:bg-red-600 transition-colors shadow-lg hover:shadow-red-500/20"
-                            >
-                                <Trash2 className="w-4 h-4 inline-block mr-2" />
-                                Delete
-                            </button>
-                        </div>
-                    </div>
-                ) : (
-                    // --- Input Modal Content (Admin, Tag, Folder) ---
-                    <div className="space-y-6">
-                        <div>
-                            <label className="block text-xs font-bold text-white/50 mb-1 uppercase tracking-wider">
-                                {activeModal === 'admin-auth' ? "Password" : activeModal === 'add-tag' ? "Tag Name" : "Folder Name"}
-                            </label>
-                            <input
-                                ref={inputRef}
-                                type={activeModal === 'admin-auth' ? "password" : "text"}
-                                value={inputValue}
-                                onChange={(e) => setInputValue(e.target.value)}
-                                onKeyDown={(e) => e.key === 'Enter' && handleModalSubmit()}
-                                className="w-full bg-black/50 border border-white/10 focus:border-primary rounded-lg px-4 py-3 text-white outline-none transition-colors"
-                                placeholder="..."
-                            />
-                        </div>
-                        <div className="flex space-x-3">
-                            <button
-                                onClick={closeModal}
-                                className="flex-1 py-3 rounded-xl font-bold text-white/50 hover:bg-white/5 hover:text-white transition-colors"
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                onClick={handleModalSubmit}
-                                className="flex-1 py-3 rounded-xl bg-primary text-white font-bold hover:bg-primary/80 transition-colors shadow-lg"
-                            >
-                                Confirm
-                            </button>
-                        </div>
-                    </div>
-                )}
-            </Modal>
+                            Download ZIP
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
         </div>
     );
 }

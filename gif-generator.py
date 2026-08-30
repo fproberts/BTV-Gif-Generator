@@ -77,7 +77,7 @@ def resize_and_slide_image_to_gif(
         # Apply 30% Lossy Palette Quantization (128 adaptive colors)
         lossy_frames = []
         for f in frames:
-            q = f.quantize(colors=128, method=Image.Quantize.MEDIANCUT)
+            q = f.quantize(colors=128, method=Image.Quantize.FASTOCTREE)
             lossy_frames.append(q.convert("RGB"))
 
         # Save as optimized lossy GIF

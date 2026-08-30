@@ -16,6 +16,7 @@ import {
     BLEState
 } from '@/lib/webBluetooth';
 import { generateClientScrollingGif } from '@/lib/clientGifGenerator';
+import { TextStudio } from '@/components/TextStudio';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -248,45 +249,19 @@ export function ScreenControlBar() {
                 </div>
             )}
 
-            {/* Action Grid */}
+            {/* Redesigned Text Studio */}
+            <TextStudio bleState={bleState} />
+
+            {/* Display Controls & Quick Stream Deck */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-                {/* Live Text Broadcaster & Quick Photo Streamer */}
-                <div className="flex flex-col gap-3">
+                {/* Instant Phone Photo Streamer */}
+                <div className="bg-[#171311] p-4 rounded-2xl border border-[#38302b] flex flex-col justify-between gap-3">
                     <label className="text-[11px] font-bold uppercase tracking-wider text-[#a89b8c] flex items-center">
-                        <Type className="w-3.5 h-3.5 mr-1.5 text-[#c85a32]" />
-                        Send Text Caption
+                        <Camera className="w-3.5 h-3.5 mr-1.5 text-[#6b7c4d]" />
+                        Direct Photo Streamer
                     </label>
+                    <p className="text-xs text-[#a89b8c]">Select any photo or GIF on your phone/PC to instantly convert & stream to screen.</p>
 
-                    <div className="flex items-center gap-2 bg-[#171311] p-1.5 rounded-2xl border border-[#38302b] focus-within:border-[#c85a32]/60 transition-colors">
-                        <Input
-                            type="text"
-                            placeholder="Type a quick message..."
-                            value={text}
-                            onChange={(e) => setText(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && handleSendText()}
-                            className="bg-transparent border-0 h-9 focus-visible:ring-0 text-xs px-2"
-                        />
-                        <input
-                            type="color"
-                            value={`#${color}`}
-                            onChange={(e) => setColor(e.target.value.replace('#', ''))}
-                            className="w-8 h-8 rounded-xl cursor-pointer border-0 bg-transparent shrink-0"
-                            title="Text Color"
-                        />
-                        <Button
-                            variant="terracotta"
-                            size="sm"
-                            onClick={handleSendText}
-                            isLoading={isSendingText}
-                            loadingText="Sending..."
-                            disabled={!text.trim()}
-                            className="h-9 px-4 shrink-0 rounded-xl"
-                        >
-                            Broadcast
-                        </Button>
-                    </div>
-
-                    {/* Instant Phone Photo Streamer */}
                     <div>
                         <input
                             ref={phoneFileRef}

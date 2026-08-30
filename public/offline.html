@@ -51,11 +51,17 @@
     <button id="btnConnect" class="btn btn-emerald">🔌 Connect to iPixel Screen</button>
 
     <div class="card">
-        <label>Live Text Message</label>
-        <input type="text" id="textInput" value="OFFLINE BLE!" placeholder="Type text here...">
-        <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
-            <input type="color" id="textColor" value="#00ff00" style="height: 40px; border: none; background: transparent; cursor: pointer;">
-            <input type="color" id="bgColor" value="#000000" style="height: 40px; border: none; background: transparent; cursor: pointer;">
+        <label>Live Text Broadcaster Studio</label>
+        <input type="text" id="textInput" value="OFFLINE BLE MATRIX" placeholder="Type text message...">
+        <div style="display: flex; gap: 0.5rem; margin-bottom: 0.8rem;">
+            <input type="color" id="textColor" value="#00ff00" style="height: 40px; border: none; background: transparent; cursor: pointer;" title="Text Color">
+            <input type="color" id="bgColor" value="#000000" style="height: 40px; border: none; background: transparent; cursor: pointer;" title="Background Color">
+            <select id="modeSelect" style="margin-bottom: 0;">
+                <option value="native">Instant Hardware ASCII ⚡</option>
+                <option value="scroll">Marquee Scroll ↔️</option>
+                <option value="bounce">Bounce ↕️</option>
+                <option value="static">Static Center ⏹️</option>
+            </select>
         </div>
         <button id="btnSendText" class="btn btn-primary">📺 Send Text to Screen</button>
     </div>
@@ -288,6 +294,25 @@ document.getElementById("btnSendText").addEventListener("click", async () => {
         const text = document.getElementById("textInput").value;
         const textCol = document.getElementById("textColor").value;
         const bgCol = document.getElementById("bgColor").value;
+        const mode = document.getElementById("modeSelect").value;
+
+        if (mode === "native") {
+            const textEncoder = new TextEncoder();
+            const textBytes = textEncoder.encode(text);
+            const textRgb = parseHexColor(textCol);
+            const payload = new Uint8Array(5 + textBytes.length);
+            payload[0] = textRgb.r; payload[1] = textRgb.g; payload[2] = textRgb.b;
+            payload[3] = 5; payload[4] = 1;
+            payload.set(textBytes, 5);
+
+            const pkt = new Uint8Array(3 + payload.length);
+            pkt[0] = 0x05; pkt[1] = 0x06; pkt[2] = payload.length;
+            pkt.set(payload, 3);
+            await sendRawCommand(pkt);
+            updateStatus("Sent Native ASCII Text!", "connected");
+            return;
+        }
+
         const pngBytes = await renderTextPNG(text, textCol, bgCol);
         await sendWindowFrames(pngBytes, false);
     } catch (e) {

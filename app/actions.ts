@@ -284,9 +284,9 @@ export async function sendImageToScreenAction(imageId: string, useGif = true) {
     return { success: true };
 }
 
-export async function sendTextToScreenAction(text: string, color = '00FF00', bg = '000000') {
+export async function sendTextToScreenAction(text: string, color = '00FF00', bg = '000000', mode = 'auto', size = 14, speed = 50, step = 1) {
     const { sendTextToScreen } = await import('@/lib/screenClient');
-    await sendTextToScreen(text, color, bg);
+    await sendTextToScreen(text, color, bg, mode, size, speed, step);
     return { success: true };
 }
 

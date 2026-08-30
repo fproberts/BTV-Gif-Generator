@@ -1,5 +1,14 @@
 @import "tailwindcss";
 
+/* iPixel app's bundled font — used for LED matrix text rendering */
+@font-face {
+  font-family: 'GoogleSans-Medium';
+  src: url('/fonts/GoogleSans-Medium.ttf') format('truetype');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
 @theme {
   --color-primary: #c85a32;
   --color-primary-foreground: #fbf7f2;

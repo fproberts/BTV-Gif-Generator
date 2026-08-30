@@ -30,11 +30,12 @@ export async function sendFileToScreen(filePath: string): Promise<string> {
     });
 }
 
-export async function sendTextToScreen(text: string, color = 'ffffff', bg = '000000'): Promise<string> {
+export async function sendTextToScreen(text: string, color = 'ffffff', bg = '000000', mode = 'auto', size = 20, speed = 80, step = 2): Promise<string> {
     return new Promise((resolve, reject) => {
-        console.log(`Sending text to screen: "${text}"`);
+        console.log(`Sending text to screen: "${text}" (mode: ${mode}, size: ${size})`);
 
-        const proc = spawn(PYTHON_PATH, [CLI_PATH, 'text', text, '--color', color, '--bg', bg], {
+        const args = [CLI_PATH, 'text', text, '--color', color, '--bg', bg, '--mode', mode, '--size', size.toString(), '--speed', speed.toString(), '--step', step.toString()];
+        const proc = spawn(PYTHON_PATH, args, {
             cwd: PROJECT_ROOT
         });
 

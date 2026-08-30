@@ -4,6 +4,7 @@
  */
 
 import { generateClientScrollingGif } from './clientGifGenerator';
+import { generateClientTextGif, TextAnimationOptions } from './textAnimationGenerator';
 
 const SERVICE_UUID = "000000fa-0000-1000-8000-00805f9b34fb";
 const WRITE_UUID = "0000fa02-0000-1000-8000-00805f9b34fb";
@@ -88,7 +89,7 @@ function parseHexColor(hex: string): { r: number; g: number; b: number } {
     };
 }
 
-function waitForNotifyAck(timeoutMs = 800): Promise<void> {
+function waitForNotifyAck(timeoutMs = 600): Promise<void> {
     return new Promise<void>((resolve) => {
         let timer = setTimeout(() => {
             notifyAckResolver = null;
@@ -211,11 +212,7 @@ export async function sendRawCommandBLE(bytes: Uint8Array): Promise<void> {
             await writeChar.writeValueWithResponse(chunk);
         }
         chunksSent++;
-
-        // Micro-bursting: throttling delay every 2 chunks to maximize throughput
-        if (chunksSent % 2 === 0) {
-            await new Promise(r => setTimeout(r, 4));
-        }
+        await new Promise(r => setTimeout(r, 2));
     }
 
     const tEnd = performance.now();
@@ -285,7 +282,7 @@ export async function sendWindowFramesBLE(payloadBytes: Uint8Array, isGif = fals
 
             if (pos + WINDOW_SIZE < totalSize) {
                 const ackStart = performance.now();
-                await waitForNotifyAck(800);
+                await waitForNotifyAck(600);
                 console.log(`[BLE Debug] Window ${windowIndex + 1} ACK wait time: ${(performance.now() - ackStart).toFixed(0)} ms`);
             }
 
@@ -330,10 +327,10 @@ export function renderTextPNG(text: string, textColor: string, bgColor: string):
 
             const textRgb = parseHexColor(textColor);
             ctx.fillStyle = `rgb(${textRgb.r}, ${textRgb.g}, ${textRgb.b})`;
-            ctx.font = "bold 12px Arial, Helvetica, sans-serif";
+            ctx.font = "500 14px GoogleSans-Medium, Arial, Helvetica, sans-serif";
             ctx.textAlign = "center";
             ctx.textBaseline = "middle";
-            ctx.fillText(text, 48, 8.5);
+            ctx.fillText(text, 48, 8);
 
             const imgData = ctx.getImageData(0, 0, 96, 16);
             const data = imgData.data;
@@ -369,9 +366,29 @@ export function renderTextPNG(text: string, textColor: string, bgColor: string):
     });
 }
 
-export async function sendTextBLE(text: string, textColor: string, bgColor: string): Promise<void> {
-    const pngBytes = await renderTextPNG(text, textColor, bgColor);
-    await sendWindowFramesBLE(pngBytes, false);
+export async function sendTextBLE(
+    text: string,
+    textColor = "00FF00",
+    bgColor = "000000",
+    mode: TextAnimationOptions['mode'] = "auto",
+    fontFamily = "GoogleSans-Medium, Arial, sans-serif",
+    fontSize = 14,
+    speedMs = 50,
+    stepSize = 1
+): Promise<void> {
+    const gifOrPngBytes = await generateClientTextGif({
+        text,
+        textColor,
+        bgColor,
+        mode,
+        fontFamily,
+        fontSize,
+        stepSize,
+        delayMs: speedMs
+    });
+
+    const isGif = (gifOrPngBytes.length > 3 && gifOrPngBytes[0] === 0x47 && gifOrPngBytes[1] === 0x49 && gifOrPngBytes[2] === 0x46);
+    await sendWindowFramesBLE(gifOrPngBytes, isGif);
 }
 
 export async function sendUrlBLE(url: string, isGif = false, fallbackImageUrl?: string): Promise<void> {

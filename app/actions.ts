@@ -1,6 +1,7 @@
 'use server';
 
 import fs from 'fs/promises';
+import { EXTENSION, sniffImage } from '@/lib/imageType';
 import path from 'path';
 import { timingSafeEqual } from 'crypto';
 import { revalidatePath } from 'next/cache';
@@ -69,68 +70,48 @@ export async function createFolder(name: string) {
     return folder;
 }
 
-const ALLOWED_UPLOAD_TYPES: Record<string, string[]> = {
-    '.png': ['image/png'],
-    '.jpg': ['image/jpeg'],
-    '.jpeg': ['image/jpeg'],
-    '.jfif': ['image/jpeg', 'image/pjpeg'],
-    '.gif': ['image/gif'],
-    '.webp': ['image/webp'],
-};
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 
-/** Checks the file's leading bytes, so a renamed HTML/SVG file can't be stored as an "image". */
-function hasImageSignature(buf: Buffer, ext: string): boolean {
-    const startsWith = (...bytes: number[]) => bytes.every((b, i) => buf[i] === b);
-    switch (ext) {
-        case '.png': return startsWith(0x89, 0x50, 0x4e, 0x47);
-        case '.jpg':
-        case '.jpeg':
-        case '.jfif': return startsWith(0xff, 0xd8, 0xff);
-        case '.gif': return startsWith(0x47, 0x49, 0x46, 0x38);
-        case '.webp': return startsWith(0x52, 0x49, 0x46, 0x46) && buf.subarray(8, 12).toString('ascii') === 'WEBP';
-        default: return false;
-    }
-}
+export type UploadResult = { ok: true; image: ImageRecord } | { ok: false; error: string };
 
-export async function uploadImage(formData: FormData, folderId: string | null = null) {
+/**
+ * Store an uploaded picture. The type comes from the file's own bytes (not its name, which
+ * phones don't always set), so a renamed HTML/SVG file can't be stored as an "image".
+ * Returns an error message instead of throwing: thrown errors are hidden in production.
+ */
+export async function uploadImage(formData: FormData, folderId: string | null = null): Promise<UploadResult> {
     const file = formData.get('file');
     const customName = formData.get('customName');
-
-    if (!(file instanceof File)) throw new Error('No file uploaded');
-
-    const ext = path.extname(file.name).toLowerCase();
-    const allowedMimes = ALLOWED_UPLOAD_TYPES[ext];
-    if (!allowedMimes) throw new Error('Only PNG, JPEG, GIF and WebP images can be uploaded');
-    if (file.type && !allowedMimes.includes(file.type)) throw new Error('File type does not match its extension');
-    if (file.size > MAX_UPLOAD_BYTES) throw new Error('Image is too large (max 20 MB)');
+    if (!(file instanceof File)) return { ok: false, error: 'No file arrived. Try again.' };
+    if (file.size > MAX_UPLOAD_BYTES) return { ok: false, error: 'The picture is larger than 20 MB.' };
 
     const buffer = Buffer.from(await file.arrayBuffer());
-    if (!hasImageSignature(buffer, ext)) throw new Error('File is not a valid image');
+    const kind = sniffImage(buffer);
+    if (kind !== 'png' && kind !== 'jpeg' && kind !== 'gif' && kind !== 'webp') {
+        return { ok: false, error: kind === 'heic' || kind === 'avif' ? 'This photo format isn’t supported. Use a JPEG or PNG.' : 'That file isn’t a picture.' };
+    }
 
     const id = crypto.randomUUID();
-    const filename = `${id}${ext}`;
-    const filepath = path.join(UPLOADS_DIR, filename);
-
+    const filename = `${id}${EXTENSION[kind]}`;
     await ensureDirs();
-    await fs.writeFile(filepath, buffer);
+    await fs.writeFile(path.join(UPLOADS_DIR, filename), buffer);
 
     const db = await readDb();
+    const name = (typeof customName === 'string' && customName.replace(/\s+/g, ' ').trim().slice(0, 60)) || file.name.replace(/\.[^.]+$/, '') || 'Picture';
     const image: ImageRecord = {
         id,
         filename,
         url: `/uploads/${filename}`,
-        originalName: file.name,
-        name: (typeof customName === 'string' && customName.trim()) || file.name,
+        originalName: file.name || filename,
+        name,
         tags: [],
         folderId,
         createdAt: Date.now(),
     };
-
     db.images.push(image);
     await writeDb(db);
     revalidatePath('/');
-    return image;
+    return { ok: true, image };
 }
 
 export async function updateImageTags(imageId: string, tags: string[]) {
@@ -141,6 +122,19 @@ export async function updateImageTags(imageId: string, tags: string[]) {
         await writeDb(db);
         revalidatePath('/');
     }
+}
+
+/** Rename a picture (shared, so everyone sees the new name). */
+export async function renameImage(imageId: string, name: string): Promise<{ ok: true; name: string } | { ok: false; error: string }> {
+    const clean = typeof name === 'string' ? name.replace(/\s+/g, ' ').trim().slice(0, 60) : '';
+    if (!clean) return { ok: false, error: 'Give it a name.' };
+    const db = await readDb();
+    const img = db.images.find((i) => i.id === imageId);
+    if (!img) return { ok: false, error: 'That picture no longer exists.' };
+    img.name = clean;
+    await writeDb(db);
+    revalidatePath('/');
+    return { ok: true, name: clean };
 }
 
 export async function updateImageFolder(imageId: string, folderId: string | null) {

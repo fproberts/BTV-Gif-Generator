@@ -9,23 +9,24 @@ import { Drawer, DrawerContent, DrawerFooter, DrawerHeader, DrawerTitle } from '
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
-import { createFolder, deleteFolder, deleteImage, updateImageFolder, uploadImage } from '@/app/actions';
+import { createFolder, deleteFolder, deleteImage, renameImage, updateImageFolder } from '@/app/actions';
 import { displayName, useLibrary } from '@/components/app/LibraryContext';
 import { useScreen } from '@/components/app/useScreen';
 import { AddToPlaylist } from '@/components/app/AddToPlaylist';
 import { LedImage } from '@/components/led/LedMatrix';
 import { PICTURE_MODES, itemsFromPictures, type PictureMode } from '@/lib/playlist/model';
 import type { ImageRecord } from '@/lib/types';
+import { UploadSheet } from './UploadSheet';
+import { MAX_NAME_LENGTH, sameName } from '@/lib/photoNames';
 
-const ACCEPT = 'image/png,image/jpeg,image/pjpeg,image/gif,image/webp';
-const MAX_BYTES = 20 * 1024 * 1024;
 
 export function LibraryView() {
-    const { data, setData, adminPassword, online } = useLibrary();
+    const { data, setData, adminPassword } = useLibrary();
     const [folder, setFolder] = useState<string | null>(null);
     const [query, setQuery] = useState('');
-    const [selected, setSelected] = useState<ImageRecord | null>(null);
-    const [uploading, setUploading] = useState(0);
+    const [selectedId, setSelectedId] = useState<string | null>(null);
+    const selected = data.images.find((i) => i.id === selectedId) ?? null;
+    const [picked, setPicked] = useState<File[] | null>(null);
     const [folderDialog, setFolderDialog] = useState(false);
     const [folderName, setFolderName] = useState('');
     const fileRef = useRef<HTMLInputElement>(null);
@@ -37,32 +38,11 @@ export function LibraryView() {
             .sort((a, b) => b.createdAt - a.createdAt);
     }, [data.images, folder, query]);
 
-    const upload = async (files: FileList | null) => {
-        if (!files?.length) return;
-        const list = Array.from(files);
-        for (const file of list) {
-            if (!ACCEPT.split(',').includes(file.type)) {
-                toast.error(`${file.name} isn’t a PNG, JPEG, GIF or WebP picture`);
-                continue;
-            }
-            if (file.size > MAX_BYTES) {
-                toast.error(`${file.name} is larger than 20 MB`);
-                continue;
-            }
-            setUploading((n) => n + 1);
-            try {
-                const fd = new FormData();
-                fd.append('file', file);
-                fd.append('customName', file.name.replace(/\.[^.]+$/, ''));
-                const img = await uploadImage(fd, folder);
-                setData((d) => ({ ...d, images: [...d.images, img] }));
-            } catch {
-                toast.error(`Couldn’t upload ${file.name}`, { description: online ? 'Try again in a moment.' : 'You’re offline. Uploads need signal.' });
-            } finally {
-                setUploading((n) => n - 1);
-            }
-        }
+    const choose = (files: FileList | null) => {
+        // copy first: clearing the input empties the live FileList (and lets the same photo be picked again)
+        const list = files ? Array.from(files) : [];
         if (fileRef.current) fileRef.current.value = '';
+        if (list.length) setPicked(list);
     };
 
     const addFolder = async () => {
@@ -102,11 +82,10 @@ export function LibraryView() {
                     <Button variant="ghost" size="icon-lg" aria-label="New folder" onClick={() => setFolderDialog(true)}>
                         <FolderPlus />
                     </Button>
-                    <Button size="lg" onClick={() => fileRef.current?.click()} disabled={uploading > 0}>
-                        {uploading > 0 ? <Loader2 className="animate-spin" /> : <ImagePlus />}
-                        {uploading > 0 ? 'Uploading' : 'Upload'}
+                    <Button size="lg" onClick={() => fileRef.current?.click()} disabled={!!picked}>
+                        <ImagePlus /> Upload
                     </Button>
-                    <input ref={fileRef} type="file" accept={ACCEPT} multiple hidden onChange={(e) => upload(e.target.files)} />
+                    <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => choose(e.target.files)} />
                 </div>
             </div>
 
@@ -139,7 +118,7 @@ export function LibraryView() {
                         <li key={img.id}>
                             <button
                                 type="button"
-                                onClick={() => setSelected(img)}
+                                onClick={() => setSelectedId(img.id)}
                                 className="group relative block aspect-square w-full overflow-hidden rounded-lg bg-muted focus-visible:outline-2 focus-visible:outline-ring"
                             >
                                 {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -157,7 +136,8 @@ export function LibraryView() {
                 </Button>
             )}
 
-            <PictureDrawer image={selected} onClose={() => setSelected(null)} />
+            <PictureDrawer image={selected} onClose={() => setSelectedId(null)} />
+            <UploadSheet files={picked} folderId={folder} onClose={() => setPicked(null)} />
 
             <Dialog open={folderDialog} onOpenChange={setFolderDialog}>
                 <DialogContent>
@@ -194,6 +174,62 @@ function Chip({ active, onClick, children }: { active: boolean; onClick: () => v
         >
             {children}
         </button>
+    );
+}
+
+/** Rename a picture: saved when the field loses focus or on Enter. */
+function NameField({ image }: { image: ImageRecord }) {
+    const { data, setData, online } = useLibrary();
+    const [value, setValue] = useState(displayName(image));
+    const [saving, setSaving] = useState(false);
+    const current = displayName(image);
+    const clash = value.trim() && !sameName(value, current) && data.images.some((i) => i.id !== image.id && sameName(displayName(i), value));
+
+    const save = async () => {
+        const name = value.replace(/\s+/g, ' ').trim();
+        if (!name) {
+            setValue(current);
+            return;
+        }
+        if (name === current) return;
+        setSaving(true);
+        try {
+            const res = await renameImage(image.id, name);
+            if (!res.ok) {
+                toast.error('Couldn’t rename the picture', { description: res.error });
+                setValue(current);
+                return;
+            }
+            setData((d) => ({ ...d, images: d.images.map((i) => (i.id === image.id ? { ...i, name: res.name } : i)) }));
+            toast.success('Renamed');
+        } catch {
+            toast.error('Couldn’t rename the picture', { description: online ? 'Try again in a moment.' : 'Renaming needs signal.' });
+            setValue(current);
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    return (
+        <label className="block text-sm">
+            <span className="mb-1.5 flex items-center justify-between">
+                <span>Name</span>
+                {saving && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
+            </span>
+            <Input
+                value={value}
+                maxLength={MAX_NAME_LENGTH}
+                onChange={(e) => setValue(e.target.value)}
+                onBlur={save}
+                onKeyDown={(e) => {
+                    if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                    if (e.key === 'Escape') setValue(current);
+                }}
+                enterKeyHint="done"
+                className="h-10"
+            />
+            {clash && <span className="mt-1 block text-muted-foreground">Another picture already has this name.</span>}
+        </label>
     );
 }
 
@@ -236,6 +272,7 @@ function PictureDrawer({ image, onClose }: { image: ImageRecord | null; onClose:
                                     mode={mode === 'still' ? 'still' : 'endless'}
                                     label={displayName(image)}
                                 />
+                                <NameField key={image.id} image={image} />
                                 <ToggleGroup
                                     variant="outline"
                                     className="w-full"

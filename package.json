@@ -9,9 +9,10 @@
     "lint": "eslint",
     "test:protocol": "node --test lib/ipixel/protocol.test.mjs",
     "test:library": "node --test lib/ipixel/library.test.mjs",
-    "test": "npm run test:protocol && npm run test:library && npm run test:gif && npm run test:playlist",
+    "test": "npm run test:protocol && npm run test:library && npm run test:gif && npm run test:playlist && npm run test:image",
     "test:gif": "node --no-warnings --test lib/ipixel/panelGif.test.mjs",
-    "test:playlist": "node --no-warnings --test lib/playlist/playlist.test.mjs lib/playlist/flow.test.mjs"
+    "test:playlist": "node --no-warnings --test lib/playlist/playlist.test.mjs lib/playlist/flow.test.mjs",
+    "test:image": "node --no-warnings --test lib/imageType.test.mjs lib/photoNames.test.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",

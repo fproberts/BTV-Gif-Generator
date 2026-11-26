@@ -3,17 +3,28 @@
  * Includes Console Performance Profiling & Micro-Burst GATT Chunking
  */
 
-import { generateClientScrollingGif } from './clientGifGenerator';
-import { generateClientTextGif, TextAnimationOptions } from './textAnimationGenerator';
+import { useSyncExternalStore } from 'react';
+import {
+    parseAck, classifyTransferAck, toHexBytes, splitForMtu, frameWindows,
+    buildDeviceInfoRequest, parseDeviceInfo, DEFAULT_WINDOW_SIZE,
+    buildSetProgramList, buildDeleteSlots, buildDeleteAll,
+    PROGRAM_LIST_OPCODE_U16, DELETE_SLOTS_OPCODE_U16, DELETE_ALL_OPCODE_U16,
+    SERVICE_UUID, WRITE_UUID, NOTIFY_UUID, PANEL_WIDTH, PANEL_HEIGHT, readImageSize,
+    TEXT_OPCODE_U16, IMAGE_OPCODE, IMAGE_OPCODE_U16, GIF_OPCODE, GIF_OPCODE_U16,
+    AckFrame, AckVerdict, DeviceInfo,
+} from './ipixel/protocol';
 
-const SERVICE_UUID = "000000fa-0000-1000-8000-00805f9b34fb";
-const WRITE_UUID = "0000fa02-0000-1000-8000-00805f9b34fb";
-const NOTIFY_UUID = "0000fa03-0000-1000-8000-00805f9b34fb";
-const WINDOW_SIZE = 12288; // 12 KB per window frame
+/**
+ * Bluetooth write size. The app starts at 182 (0xb6) and raises it to the negotiated maximum,
+ * which Web Bluetooth does not expose, so we stay at the value every phone supports.
+ */
+const SAFE_WRITE_SIZE = 182;
 
 export interface BLEState {
     connected: boolean;
     deviceName: string | null;
+    /** what the panel reported on connect; null if it did not answer the device-info request */
+    panel: DeviceInfo | null;
     statusText: string;
     isBusy: boolean;
     toastMessage: string | null;
@@ -21,21 +32,42 @@ export interface BLEState {
 
 type StateListener = (state: BLEState) => void;
 
-let device: any = null;
-let writeChar: any = null;
-let notifyChar: any = null;
-let notifyAckResolver: (() => void) | null = null;
+/// <reference types="web-bluetooth" />
+let device: BluetoothDevice | null = null;
+let writeChar: BluetoothRemoteGATTCharacteristic | null = null;
+let notifyChar: BluetoothRemoteGATTCharacteristic | null = null;
+
+type NotifyListener = (frame: Uint8Array) => void;
+const notifyListeners: Set<NotifyListener> = new Set();
+
+/** Subscribe to every raw notification frame from the panel. Returns an unsubscribe function. */
+export function onBLENotify(listener: NotifyListener): () => void {
+    notifyListeners.add(listener);
+    return () => {
+        notifyListeners.delete(listener);
+    };
+}
+
+const INITIAL_STATE: BLEState = {
+    connected: false,
+    deviceName: null,
+    panel: null,
+    statusText: "Disconnected",
+    isBusy: false,
+    toastMessage: null
+};
 
 let currentState: BLEState = {
     connected: false,
     deviceName: null,
+    panel: null,
     statusText: "Disconnected",
     isBusy: false,
     toastMessage: null
 };
 
 const listeners: Set<StateListener> = new Set();
-let toastTimeout: any = null;
+let toastTimeout: ReturnType<typeof setTimeout> | null = null;
 
 function updateState(partial: Partial<BLEState>) {
     currentState = { ...currentState, ...partial };
@@ -63,44 +95,7 @@ export function getBLEState(): BLEState {
 }
 
 export function isWebBluetoothSupported(): boolean {
-    return typeof window !== 'undefined' && typeof (navigator as any).bluetooth !== 'undefined';
-}
-
-function crc32(bytes: Uint8Array): number {
-    let crc = 0xFFFFFFFF;
-    for (let i = 0; i < bytes.length; i++) {
-        crc ^= bytes[i];
-        for (let j = 0; j < 8; j++) {
-            crc = (crc >>> 1) ^ ((crc & 1) ? 0xEDB88320 : 0);
-        }
-    }
-    return (crc ^ 0xFFFFFFFF) >>> 0;
-}
-
-function parseHexColor(hex: string): { r: number; g: number; b: number } {
-    let c = hex.replace("#", "");
-    if (c.length === 3) c = c.split("").map(x => x + x).join("");
-    const num = parseInt(c, 16);
-    if (isNaN(num)) return { r: 255, g: 255, b: 255 };
-    return {
-        r: (num >> 16) & 255,
-        g: (num >> 8) & 255,
-        b: num & 255
-    };
-}
-
-function waitForNotifyAck(timeoutMs = 600): Promise<void> {
-    return new Promise<void>((resolve) => {
-        let timer = setTimeout(() => {
-            notifyAckResolver = null;
-            resolve();
-        }, timeoutMs);
-
-        notifyAckResolver = () => {
-            clearTimeout(timer);
-            resolve();
-        };
-    });
+    return typeof window !== 'undefined' && typeof navigator.bluetooth !== 'undefined';
 }
 
 export async function connectBLE(): Promise<boolean> {
@@ -113,7 +108,7 @@ export async function connectBLE(): Promise<boolean> {
     try {
         console.log("🔌 [BLE Debug] Requesting Bluetooth Device (LED_BLE)...");
         updateState({ statusText: "Scanning for BLE..." });
-        const bluetooth = (navigator as any).bluetooth;
+        const bluetooth = navigator.bluetooth;
 
         device = await bluetooth.requestDevice({
             filters: [{ namePrefix: "LED_BLE" }],
@@ -125,12 +120,13 @@ export async function connectBLE(): Promise<boolean> {
             device = null;
             writeChar = null;
             notifyChar = null;
-            updateState({ connected: false, deviceName: null, statusText: "Disconnected", isBusy: false });
+            updateState({ connected: false, deviceName: null, panel: null, statusText: "Disconnected", isBusy: false });
             showToast("Bluetooth Disconnected");
         });
 
         console.log(`🔌 [BLE Debug] Connecting to GATT server on ${device.name}...`);
         updateState({ statusText: "Connecting GATT..." });
+        if (!device.gatt) throw new Error("This Bluetooth device has no GATT server");
         const server = await device.gatt.connect();
 
         let service;
@@ -149,15 +145,11 @@ export async function connectBLE(): Promise<boolean> {
         try {
             notifyChar = await service.getCharacteristic(NOTIFY_UUID);
             await notifyChar.startNotifications();
-            notifyChar.addEventListener('characteristicvaluechanged', (e: any) => {
-                const val = new Uint8Array(e.target.value.buffer);
+            notifyChar.addEventListener('characteristicvaluechanged', (e: Event) => {
+                const dv = (e.target as BluetoothRemoteGATTCharacteristic).value!;
+                const val = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength).slice();
                 console.log("🔔 [BLE Debug] Received Notify ACK packet:", Array.from(val).map(b => b.toString(16).padStart(2, '0')).join(' '));
-                if (val.length >= 5 && val[0] === 0x05) {
-                    if (notifyAckResolver) {
-                        notifyAckResolver();
-                        notifyAckResolver = null;
-                    }
-                }
+                notifyListeners.forEach((fn) => fn(val));
             });
             console.log("🔌 [BLE Debug] Notify Characteristic initialized:", NOTIFY_UUID);
         } catch (e) {
@@ -166,9 +158,14 @@ export async function connectBLE(): Promise<boolean> {
 
         const name = device.name || "iPixel Panel";
         updateState({ connected: true, deviceName: name, statusText: `Connected to ${name}` });
+        const panel = notifyChar ? await requestDeviceInfo() : null;
+        updateState({ panel });
+        console.log("🔌 [BLE Debug] Panel info:", panel
+            ? { screenCode: `0x${panel.screenCode.toString(16)}`, screenType: panel.screenType, windowSize: panel.windowSize, raw: toHexBytes(panel.raw) }
+            : "no reply (using 4 KB windows)");
         showToast(`Connected to ${name}`);
         return true;
-    } catch (e: any) {
+    } catch (e) {
         console.error("🔌 [BLE Debug] Connection error:", e);
         updateState({ connected: false, statusText: "Disconnected", isBusy: false });
         showToast("Connection canceled");
@@ -187,8 +184,31 @@ export async function disconnectBLE(): Promise<void> {
     device = null;
     writeChar = null;
     notifyChar = null;
-    updateState({ connected: false, deviceName: null, statusText: "Disconnected", isBusy: false });
+    updateState({ connected: false, deviceName: null, panel: null, statusText: "Disconnected", isBusy: false });
     showToast("Disconnected Bluetooth");
+}
+
+/** Ask the panel for its device info (screen type, which sets the window size). Resolves null on timeout. */
+async function requestDeviceInfo(timeoutMs = 2000): Promise<DeviceInfo | null> {
+    let off: () => void = () => {};
+    const reply = new Promise<DeviceInfo | null>((resolve) => {
+        const timer = setTimeout(() => { off(); resolve(null); }, timeoutMs);
+        off = onBLENotify((raw) => {
+            const info = parseDeviceInfo(raw);
+            if (!info) return;
+            clearTimeout(timer);
+            off();
+            resolve(info);
+        });
+    });
+    try {
+        await sendRawCommandBLE(buildDeviceInfoRequest());
+    } catch (e) {
+        off();
+        console.warn("🔌 [BLE Debug] Device info request failed:", e);
+        return null;
+    }
+    return reply;
 }
 
 export async function sendRawCommandBLE(bytes: Uint8Array): Promise<void> {
@@ -196,7 +216,7 @@ export async function sendRawCommandBLE(bytes: Uint8Array): Promise<void> {
         showToast("Error: Connect Bluetooth first!");
         throw new Error("Bluetooth device not connected.");
     }
-    const CHUNK = 244;
+    const CHUNK = SAFE_WRITE_SIZE;
     const canWriteWithoutResponse = typeof writeChar.writeValueWithoutResponse === 'function';
 
     const tStart = performance.now();
@@ -222,219 +242,57 @@ export async function sendRawCommandBLE(bytes: Uint8Array): Promise<void> {
     console.log(`⚡ [BLE Debug] Sent chunk batch: ${bytes.length} bytes (${chunksSent} chunks) in ${(tEnd - tStart).toFixed(0)} ms (~${speedKBps} KB/s)`);
 }
 
-export async function sendWindowFramesBLE(payloadBytes: Uint8Array, isGif = false): Promise<void> {
+/** Defaults for image/GIF transfers, following the app (REA findings section 5.2). */
+export const MEDIA_SEND_DEFAULTS = {
+    mtu: SAFE_WRITE_SIZE,
+    writeMode: 'auto' as WriteMode,
+    interChunkDelayMs: 10,
+    ackTimeoutMs: 6000,
+    requireAck: true,
+    maxRetries: 3,
+};
+
+/**
+ * Send a PNG or GIF to the panel: frame it into windows sized for this panel, then send each
+ * window and wait for the panel's reply (1 = next, 3 = done, 0 = restart, 2 = abort).
+ */
+export async function sendWindowFramesBLE(payloadBytes: Uint8Array, isGif = false, listId = 0, opts: { quiet?: boolean } = {}): Promise<void> {
     if (!writeChar) {
         showToast("Error: Connect Bluetooth first!");
         throw new Error("Bluetooth device not connected.");
     }
-
-    console.group("📡 [BLE Media Stream Debug]");
-    const streamStart = performance.now();
-
-    const totalSize = payloadBytes.length;
-    const crcVal = crc32(payloadBytes);
-
-    const cmdByte = isGif ? 0x03 : 0x02;
-    const typeByte = isGif ? 0x02 : 0x00;
-
-    let pos = 0;
-    let windowIndex = 0;
-    const totalWindows = Math.ceil(totalSize / WINDOW_SIZE) || 1;
-
-    console.log(`[BLE Debug] Starting Stream: Type=${isGif ? 'GIF' : 'PNG'}, Total Size=${totalSize} bytes (${(totalSize/1024).toFixed(1)} KB), Windows=${totalWindows}, CRC32=0x${crcVal.toString(16).toUpperCase()}`);
-
-    updateState({ isBusy: true, statusText: `Streaming ${isGif ? 'GIF' : 'Image'} (${Math.round(totalSize / 1024)} KB)...` });
-
+    const kind = isGif ? 'GIF' : 'Image';
+    const dims = readImageSize(payloadBytes);
+    if (!dims || dims.width !== PANEL_WIDTH || dims.height !== PANEL_HEIGHT) {
+        // The app refuses anything that is not exactly the panel size (REA 6.2); the panel keeps the old content.
+        const got = dims ? `${dims.width}×${dims.height}` : 'an unreadable image';
+        showToast(`Not sent: the screen needs ${PANEL_WIDTH}×${PANEL_HEIGHT}, this is ${got}`);
+        throw new Error(`Image must be ${PANEL_WIDTH}x${PANEL_HEIGHT}, got ${got}`);
+    }
+    const windowSize = currentState.panel?.windowSize ?? DEFAULT_WINDOW_SIZE;
+    const windows = frameWindows(payloadBytes, {
+        windowSize,
+        listId,
+        legacyLengthField: false,
+        opcode: isGif ? GIF_OPCODE : IMAGE_OPCODE,
+        typeByte: isGif ? 0x02 : 0x00,
+    });
+    const started = performance.now();
+    console.log(`📡 [BLE Debug] Sending ${kind}: ${payloadBytes.length} bytes in ${windows.length} window(s) of ${windowSize}`);
     try {
-        while (pos < totalSize) {
-            const windowStart = performance.now();
-            const windowEnd = Math.min(pos + WINDOW_SIZE, totalSize);
-            const chunkData = payloadBytes.subarray(pos, windowEnd);
-
-            const option = (windowIndex === 0) ? 0x00 : 0x02;
-
-            const header = new Uint8Array(13);
-            header[0] = cmdByte;
-            header[1] = 0x00;
-            header[2] = option;
-
-            new DataView(header.buffer).setUint32(3, totalSize, true);
-            new DataView(header.buffer).setUint32(7, crcVal, true);
-            header[11] = typeByte;
-            header[12] = 0x00;
-
-            const frame = new Uint8Array(header.length + chunkData.length);
-            frame.set(header, 0);
-            frame.set(chunkData, header.length);
-
-            const prefix = new Uint8Array(2);
-            new DataView(prefix.buffer).setUint16(0, frame.length + 2, true);
-
-            const fullMsg = new Uint8Array(prefix.length + frame.length);
-            fullMsg.set(prefix, 0);
-            fullMsg.set(frame, prefix.length);
-
-            const pct = Math.round(((windowIndex + 1) / totalWindows) * 100);
-            console.log(`[BLE Debug] Window ${windowIndex + 1}/${totalWindows} (${fullMsg.length} bytes, Option 0x${option.toString(16)})...`);
-            updateState({ statusText: `Streaming ${isGif ? 'GIF' : 'Image'}: ${pct}% (Window ${windowIndex + 1}/${totalWindows})...` });
-
-            await sendRawCommandBLE(fullMsg);
-
-            if (pos + WINDOW_SIZE < totalSize) {
-                const ackStart = performance.now();
-                await waitForNotifyAck(600);
-                console.log(`[BLE Debug] Window ${windowIndex + 1} ACK wait time: ${(performance.now() - ackStart).toFixed(0)} ms`);
-            }
-
-            const windowTime = (performance.now() - windowStart).toFixed(0);
-            console.log(`[BLE Debug] Window ${windowIndex + 1} finished in ${windowTime} ms`);
-
-            windowIndex++;
-            pos = windowEnd;
-        }
-
-        const totalTimeSec = ((performance.now() - streamStart) / 1000).toFixed(2);
-        console.log(`✅ [BLE Debug] Media stream COMPLETE! Total elapsed time: ${totalTimeSec} seconds (${(totalSize / 1024 / parseFloat(totalTimeSec)).toFixed(1)} KB/s avg)`);
-        console.groupEnd();
-
-        updateState({ isBusy: false, statusText: `Connected to ${currentState.deviceName}` });
-        showToast(isGif ? "GIF Sent to Screen!" : "Image Sent to Screen!");
-    } catch (e: any) {
-        console.error("❌ [BLE Debug] Stream failed:", e);
-        console.groupEnd();
-        updateState({ isBusy: false, statusText: `Connected to ${currentState.deviceName}` });
-        showToast("Failed to send to screen");
-        throw e;
-    }
-}
-
-/**
- * Render text to PNG with Crisp Pixel Thresholding
- */
-export function renderTextPNG(text: string, textColor: string, bgColor: string): Promise<Uint8Array> {
-    return new Promise((resolve) => {
-        const canvas = document.createElement("canvas");
-        canvas.width = 96;
-        canvas.height = 16;
-        const ctx = canvas.getContext("2d");
-
-        if (ctx) {
-            ctx.imageSmoothingEnabled = false;
-
-            const bgRgb = parseHexColor(bgColor);
-            ctx.fillStyle = `rgb(${bgRgb.r}, ${bgRgb.g}, ${bgRgb.b})`;
-            ctx.fillRect(0, 0, 96, 16);
-
-            const textRgb = parseHexColor(textColor);
-            ctx.fillStyle = `rgb(${textRgb.r}, ${textRgb.g}, ${textRgb.b})`;
-            ctx.font = "500 14px GoogleSans-Medium, Arial, Helvetica, sans-serif";
-            ctx.textAlign = "center";
-            ctx.textBaseline = "middle";
-            ctx.fillText(text, 48, 8);
-
-            const imgData = ctx.getImageData(0, 0, 96, 16);
-            const data = imgData.data;
-
-            for (let i = 0; i < data.length; i += 4) {
-                const r = data[i], g = data[i + 1], b = data[i + 2], a = data[i + 3];
-                const diff = Math.abs(r - bgRgb.r) + Math.abs(g - bgRgb.g) + Math.abs(b - bgRgb.b);
-
-                if (a > 60 && diff > 50) {
-                    data[i] = textRgb.r;
-                    data[i + 1] = textRgb.g;
-                    data[i + 2] = textRgb.b;
-                    data[i + 3] = 255;
-                } else {
-                    data[i] = bgRgb.r;
-                    data[i + 1] = bgRgb.g;
-                    data[i + 2] = bgRgb.b;
-                    data[i + 3] = 255;
-                }
-            }
-
-            ctx.putImageData(imgData, 0, 0);
-        }
-
-        canvas.toBlob(async (blob) => {
-            if (blob) {
-                const buf = await blob.arrayBuffer();
-                resolve(new Uint8Array(buf));
-            } else {
-                resolve(new Uint8Array(0));
-            }
-        }, "image/png");
-    });
-}
-
-export async function sendTextBLE(
-    text: string,
-    textColor = "00FF00",
-    bgColor = "000000",
-    mode: TextAnimationOptions['mode'] = "auto",
-    fontFamily = "GoogleSans-Medium, Arial, sans-serif",
-    fontSize = 14,
-    speedMs = 50,
-    stepSize = 1
-): Promise<void> {
-    const gifOrPngBytes = await generateClientTextGif({
-        text,
-        textColor,
-        bgColor,
-        mode,
-        fontFamily,
-        fontSize,
-        stepSize,
-        delayMs: speedMs
-    });
-
-    const isGif = (gifOrPngBytes.length > 3 && gifOrPngBytes[0] === 0x47 && gifOrPngBytes[1] === 0x49 && gifOrPngBytes[2] === 0x46);
-    await sendWindowFramesBLE(gifOrPngBytes, isGif);
-}
-
-export async function sendUrlBLE(url: string, isGif = false, fallbackImageUrl?: string): Promise<void> {
-    console.log(`🌐 [BLE Debug] sendUrlBLE called with url: "${url}", isGif: ${isGif}`);
-    const fetchStart = performance.now();
-
-    const response = await fetch(url);
-    if (!response.ok) {
-        showToast("Error fetching media URL");
-        throw new Error(`Failed to fetch media from ${url}`);
-    }
-    const blob = await response.blob();
-    const arrayBuffer = await blob.arrayBuffer();
-    const bytes = new Uint8Array(arrayBuffer);
-
-    console.log(`🌐 [BLE Debug] Media fetched in ${(performance.now() - fetchStart).toFixed(0)} ms. Size: ${bytes.length} bytes (${(bytes.length/1024).toFixed(1)} KB)`);
-
-    if (!isGif) {
-        const img = new Image();
-        img.crossOrigin = "anonymous";
-        img.src = URL.createObjectURL(blob);
-        await img.decode();
-
-        const canvas = document.createElement("canvas");
-        canvas.width = 96;
-        canvas.height = 16;
-        const ctx = canvas.getContext("2d");
-        if (ctx) {
-            ctx.imageSmoothingEnabled = false;
-            ctx.drawImage(img, 0, 0, 96, 16);
-        }
-
-        const pngBytes = await new Promise<Uint8Array>((resolve) => {
-            canvas.toBlob(async (b) => {
-                if (b) {
-                    const buf = await b.arrayBuffer();
-                    resolve(new Uint8Array(buf));
-                } else {
-                    resolve(new Uint8Array(0));
-                }
-            }, "image/png");
+        const res = await sendNativeWindowsBLE(windows, {
+            ...MEDIA_SEND_DEFAULTS,
+            opcode: isGif ? GIF_OPCODE_U16 : IMAGE_OPCODE_U16,
+            busyText: `Sending ${kind.toLowerCase()} (${Math.round(payloadBytes.length / 1024)} KB)…`,
+            onProgress: (p) => updateState({ statusText: `Sending ${kind.toLowerCase()}: ${p.message}` }),
         });
-
-        await sendWindowFramesBLE(pngBytes, false);
-    } else {
-        await sendWindowFramesBLE(bytes, true);
+        const secs = (performance.now() - started) / 1000;
+        console.log(`✅ [BLE Debug] ${kind} sent in ${secs.toFixed(2)} s, ${res.attempts} attempt(s), replies: ${res.acks.join(' | ')}`);
+        if (!opts.quiet) showToast(isGif ? "GIF Sent to Screen!" : "Image Sent to Screen!");
+    } catch (e) {
+        console.error("❌ [BLE Debug] Send failed:", e);
+        if (!opts.quiet) showToast(`Failed to send to screen: ${e instanceof Error ? e.message : 'unknown error'}`);
+        throw e;
     }
 }
 
@@ -455,7 +313,281 @@ export async function setClockBLE(): Promise<void> {
     showToast("Clock Mode active");
 }
 
-export async function clearMemoryBLE(): Promise<void> {
-    await sendRawCommandBLE(new Uint8Array([4, 0, 3, 0x80]));
-    showToast("Cleared Screen Memory");
+// ---------------------------------------------------------------------------
+// Native text transfer (windows built by lib/ipixel/protocol.ts)
+// ---------------------------------------------------------------------------
+
+export type WriteMode = 'auto' | 'response' | 'noresponse';
+
+export interface NativeSendOptions {
+    /** transfer opcode the panel echoes in its replies (u16 LE of header bytes 2-3); defaults to text */
+    opcode?: number;
+    /** status text while sending */
+    busyText?: string;
+    /** max bytes per GATT write */
+    mtu: number;
+    writeMode: WriteMode;
+    /** pause between GATT writes */
+    interChunkDelayMs: number;
+    /** how long to wait for the panel's reply to each window */
+    ackTimeoutMs: number;
+    /** fail if the panel does not acknowledge a window (recommended) */
+    requireAck: boolean;
+    /** extra full attempts after a "failure" (status 0) reply; the app allows 3 */
+    maxRetries: number;
+    onProgress?: (p: { window: number; windows: number; attempt: number; message: string }) => void;
+}
+
+export interface NativeSendResult {
+    attempts: number;
+    /** hex of every acknowledgement frame received */
+    acks: string[];
+}
+
+function getWriteCapabilities(): { response: boolean; noResponse: boolean } | null {
+    if (!writeChar) return null;
+    const p = writeChar.properties || {};
+    return { response: !!p.write, noResponse: !!p.writeWithoutResponse };
+}
+
+function resolveWriteMode(mode: WriteMode): 'response' | 'noresponse' {
+    const caps = getWriteCapabilities() ?? { response: true, noResponse: false };
+    if (mode === 'response') return caps.response ? 'response' : 'noresponse';
+    if (mode === 'noresponse') return caps.noResponse ? 'noresponse' : 'response';
+    // auto: the app prefers write-without-response when the characteristic offers it
+    return caps.noResponse ? 'noresponse' : 'response';
+}
+
+async function writePieces(bytes: Uint8Array, opts: NativeSendOptions): Promise<void> {
+    if (!writeChar) throw new Error('Bluetooth device not connected.');
+    const mode = resolveWriteMode(opts.writeMode);
+    for (const part of splitForMtu(bytes, opts.mtu)) {
+        // copy into a plain ArrayBuffer-backed view (Web Bluetooth rejects shared buffers)
+        const piece = new Uint8Array(part);
+        if (mode === 'noresponse' && typeof writeChar.writeValueWithoutResponse === 'function') {
+            await writeChar.writeValueWithoutResponse(piece);
+        } else if (typeof writeChar.writeValueWithResponse === 'function') {
+            await writeChar.writeValueWithResponse(piece);
+        } else {
+            await writeChar.writeValue(piece);
+        }
+        if (opts.interChunkDelayMs > 0) await new Promise((r) => setTimeout(r, opts.interChunkDelayMs));
+    }
+}
+
+type AckOutcome = { verdict: AckVerdict | 'timeout'; frame?: AckFrame };
+
+/** Start listening *before* writing so a fast reply cannot be missed. */
+function createAckWaiter(timeoutMs: number, opcode: number): { promise: Promise<AckOutcome>; cancel: () => void } {
+    let off: () => void = () => {};
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const promise = new Promise<AckOutcome>((resolve) => {
+        timer = setTimeout(() => {
+            off();
+            resolve({ verdict: 'timeout' });
+        }, timeoutMs);
+        off = onBLENotify((raw) => {
+            const frame = parseAck(raw);
+            if (!frame) return;
+            const verdict = classifyTransferAck(frame, opcode);
+            if (verdict === 'ignore') return;
+            if (timer) clearTimeout(timer);
+            off();
+            resolve({ verdict, frame });
+        });
+    });
+    return {
+        promise,
+        cancel: () => {
+            if (timer) clearTimeout(timer);
+            off();
+        },
+    };
+}
+
+class RetryableTransferError extends Error {}
+
+/**
+ * Send pre-framed windows, waiting for the panel's `05 00 <opcode> <status>`
+ * reply after each one: 1 = next window, 3 = done, 0 = restart (up to maxRetries),
+ * 2 = abort. A missing reply is an error unless requireAck is off.
+ */
+export async function sendNativeWindowsBLE(windows: Uint8Array[], opts: NativeSendOptions): Promise<NativeSendResult> {
+    if (!writeChar) {
+        showToast('Error: Connect Bluetooth first!');
+        throw new Error('Bluetooth device not connected.');
+    }
+    const acks: string[] = [];
+    let attempt = 0;
+    const idle = `Connected to ${currentState.deviceName}`;
+    const opcode = opts.opcode ?? TEXT_OPCODE_U16;
+    updateState({ isBusy: true, statusText: opts.busyText ?? 'Sending text…' });
+    try {
+        for (;;) {
+            attempt++;
+            try {
+                for (let i = 0; i < windows.length; i++) {
+                    opts.onProgress?.({
+                        window: i + 1,
+                        windows: windows.length,
+                        attempt,
+                        message: `Window ${i + 1}/${windows.length}${attempt > 1 ? ` (attempt ${attempt})` : ''}`,
+                    });
+                    const waiter = opts.requireAck ? createAckWaiter(opts.ackTimeoutMs, opcode) : null;
+                    try {
+                        await writePieces(windows[i], opts);
+                    } catch (e) {
+                        waiter?.cancel();
+                        throw e;
+                    }
+                    if (!waiter) {
+                        if (i < windows.length - 1) await new Promise((r) => setTimeout(r, 30));
+                        continue;
+                    }
+                    const res = await waiter.promise;
+                    if (res.frame) acks.push(toHexBytes(res.frame.raw));
+                    if (res.verdict === 'timeout') {
+                        throw new Error(
+                            `No acknowledgement from the panel for window ${i + 1}/${windows.length} within ${opts.ackTimeoutMs} ms. ` +
+                                'If the panel never replies, turn off "Require acknowledgement" in Advanced.'
+                        );
+                    }
+                    if (res.verdict === 'retry') throw new RetryableTransferError('Panel reported a failed transfer (status 0).');
+                    if (res.verdict === 'abort') throw new Error('Panel aborted the transfer (status 2).');
+                    if (res.verdict === 'complete') break;
+                }
+                return { attempts: attempt, acks };
+            } catch (e) {
+                if (e instanceof RetryableTransferError && attempt <= opts.maxRetries) continue;
+                throw e;
+            }
+        }
+    } finally {
+        updateState({ isBusy: false, statusText: currentState.connected ? idle : 'Disconnected' });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Program list (playlist) on the panel. REA findings section 6.
+// ---------------------------------------------------------------------------
+
+/** Send a short command and wait for the panel's `05 00 <opcode> <status>` reply. Resolves the status byte. */
+export async function sendCommandAwaitReply(bytes: Uint8Array, opcode: number, timeoutMs = 5000): Promise<number> {
+    let off: () => void = () => {};
+    const reply = new Promise<number>((resolve, reject) => {
+        const timer = setTimeout(() => { off(); reject(new Error(`No reply from the panel within ${timeoutMs} ms`)); }, timeoutMs);
+        off = onBLENotify((raw) => {
+            const frame = parseAck(raw);
+            if (!frame || frame.opcode !== opcode) return;
+            clearTimeout(timer);
+            off();
+            resolve(frame.status);
+        });
+    });
+    try {
+        await sendRawCommandBLE(bytes);
+    } catch (e) {
+        off();
+        throw e;
+    }
+    return reply;
+}
+
+/** Tell the panel which slots to play, in order. The app treats a non-zero reply as success. */
+export async function setProgramListBLE(slots: number[]): Promise<number> {
+    const status = await sendCommandAwaitReply(buildSetProgramList(slots), PROGRAM_LIST_OPCODE_U16);
+    console.log(`🎞️ [BLE Debug] Program list [${slots.join(', ')}] -> status ${status}`);
+    if (status === 0) throw new Error('Panel rejected the program list (status 0)');
+    return status;
+}
+
+/** Delete stored slots. Which reply status means success is not known yet, so it is returned as-is. */
+export async function deleteSlotsBLE(slots: number[]): Promise<number> {
+    const status = await sendCommandAwaitReply(buildDeleteSlots(slots), DELETE_SLOTS_OPCODE_U16);
+    console.log(`🗑️ [BLE Debug] Delete slots [${slots.join(', ')}] -> status ${status}`);
+    return status;
+}
+
+export async function deleteAllSlotsBLE(): Promise<number> {
+    const status = await sendCommandAwaitReply(buildDeleteAll(), DELETE_ALL_OPCODE_U16);
+    console.log(`🗑️ [BLE Debug] Delete all -> status ${status}`);
+    return status;
+}
+
+export type PlaylistUploadItem = { kind: 'image' | 'gif'; bytes: Uint8Array };
+
+type TestBuildSpec =
+    | { type: 'scroll'; url: string; pxPerSecond?: number; stepPx?: number; wrap?: boolean; colours?: number }
+    | { type: 'strip'; urls: string[]; pxPerSecond?: number; stepPx?: number; wrap?: boolean; colours?: number }
+    | { type: 'still'; url: string; seconds?: number; fit?: 'cover' | 'contain'; colours?: number };
+
+/**
+ * The app's sequence (REA 6.5): set the program list to slots 1..n, then upload each item
+ * into its slot, waiting for the panel to finish each one before the next.
+ */
+export async function uploadPlaylistBLE(items: PlaylistUploadItem[], firstSlot = 1): Promise<number[]> {
+    const slots = items.map((_, i) => firstSlot + i);
+    await setProgramListBLE(slots);
+    for (let i = 0; i < items.length; i++) {
+        updateState({ statusText: `Uploading playlist item ${i + 1}/${items.length}…` });
+        await sendWindowFramesBLE(items[i].bytes, items[i].kind === 'gif', slots[i]);
+    }
+    return slots;
+}
+
+// Temporary console hook for hardware tests, e.g. in DevTools:
+//   await __ipixel.testPlaylist(['/uploads/a.gif', '/uploads/b.gif'])
+//   await __ipixel.setProgramList([2])      // show only slot 2
+//   await __ipixel.deleteSlots([1, 2])
+if (typeof window !== 'undefined') {
+    const fetchItem = async (url: string): Promise<PlaylistUploadItem> => {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`Could not fetch ${url}`);
+        const bytes = new Uint8Array(await res.arrayBuffer());
+        const isGif = bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46;
+        return { kind: isGif ? 'gif' : 'image', bytes };
+    };
+    (window as unknown as { __ipixel: unknown }).__ipixel = {
+        setProgramList: setProgramListBLE,
+        deleteSlots: deleteSlotsBLE,
+        deleteAll: deleteAllSlotsBLE,
+        sendCommandAwaitReply,
+        testPlaylist: async (urls: string[], firstSlot = 1) => uploadPlaylistBLE(await Promise.all(urls.map(fetchItem)), firstSlot),
+        /**
+         * Build panel-safe GIFs in the browser from original images, then upload them as a playlist:
+         *   await __ipixel.testBuild([{ type: 'scroll', url, pxPerSecond: 16, wrap: true },
+         *                             { type: 'strip', urls: [a, b] }, { type: 'still', url, seconds: 8 }])
+         */
+        testBuild: async (specs: TestBuildSpec[]) => {
+            const [{ buildScrollGif, buildStillGif, stackStrips }, { loadScrollStrip, loadStillFrame }] = await Promise.all([
+                import('./ipixel/panelGif'),
+                import('./ipixel/imageStrip'),
+            ]);
+            const items: PlaylistUploadItem[] = [];
+            for (const spec of specs) {
+                const t0 = performance.now();
+                let built;
+                if (spec.type === 'still') built = buildStillGif(await loadStillFrame(spec.url, spec.fit ?? 'cover'), spec.seconds ?? 8, spec.colours);
+                else {
+                    const strip = spec.type === 'strip'
+                        ? stackStrips(await Promise.all(spec.urls.map(loadScrollStrip)))
+                        : await loadScrollStrip(spec.url);
+                    built = buildScrollGif(strip, { colours: spec.colours, pxPerSecond: spec.pxPerSecond, stepPx: spec.stepPx, wrap: spec.wrap ?? spec.type === 'strip' });
+                }
+                console.log(`🧪 [Build] ${spec.type}: ${built.frames} frames, ${(built.durationMs / 1000).toFixed(1)} s, ${(built.bytes.length / 1024).toFixed(1)} KB, built in ${(performance.now() - t0).toFixed(0)} ms`);
+                items.push({ kind: 'gif', bytes: built.bytes });
+            }
+            return uploadPlaylistBLE(items);
+        },
+        state: getBLEState,
+    };
+}
+
+/** React hook: the live Bluetooth connection state. */
+export function useBLEState(): BLEState {
+    return useSyncExternalStore(
+        (cb) => subscribeBLEState(() => cb()),
+        getBLEState,
+        () => INITIAL_STATE,
+    );
 }

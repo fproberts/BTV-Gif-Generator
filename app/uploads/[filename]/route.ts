@@ -28,25 +28,21 @@ export async function GET(
         // Determine content type
         const ext = path.extname(filename).toLowerCase();
         let contentType = 'application/octet-stream';
-        if (ext === '.jpg' || ext === '.jpeg') contentType = 'image/jpeg';
+        if (ext === '.jpg' || ext === '.jpeg' || ext === '.jfif') contentType = 'image/jpeg';
         if (ext === '.png') contentType = 'image/png';
         if (ext === '.gif') contentType = 'image/gif';
         if (ext === '.webp') contentType = 'image/webp';
-        if (ext === '.svg') contentType = 'image/svg+xml';
 
         return new NextResponse(fileBuffer, {
             headers: {
                 'Content-Type': contentType,
-                // Cache control: allow caching but revalidate often since we might overwrite? 
-                // Actually for this app, immutable names are used (uuids). 
-                // But let's set a short max-age to be safe.
+                // Never let the browser treat an upload as HTML/script, even if one slipped in.
+                'X-Content-Type-Options': 'nosniff',
+                'Content-Security-Policy': "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox",
                 'Cache-Control': 'public, max-age=60',
             },
         });
-    } catch (error) {
-        // console.error(`Error serving file ${filename}:`, error); 
-        // Silent error preferred for 404s to avoid log spam? 
-        // Or maybe log it to help debug if needed.
+    } catch {
         return new NextResponse('File not found', { status: 404 });
     }
 }

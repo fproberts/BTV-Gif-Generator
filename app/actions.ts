@@ -2,17 +2,11 @@
 
 import fs from 'fs/promises';
 import path from 'path';
-import { generateGif } from '@/lib/gifGenerator';
+import { timingSafeEqual } from 'crypto';
 import { revalidatePath } from 'next/cache';
 
-// Constants
-// Constants
-// If STORAGE_PATH is set (e.g. /app/persistent in Docker), we use that root.
-// Otherwise we default to the local project structure.
-const BASE_PATH = process.env.STORAGE_PATH || process.cwd();
-
-// If we are in Docker (STORAGE_PATH is set), we might need to append 'data' and 'uploads' explicitly
-// dependent on if we want them nested.
+// Storage locations. If STORAGE_PATH is set (e.g. /app/persistent in Docker) we use that root,
+// otherwise the local project structure.
 // Local:
 //   DATA_DIR = ./data
 //   UPLOADS_DIR = ./public/uploads
@@ -43,29 +37,7 @@ async function ensureDirs() {
     }
 }
 
-// Types
-type ImageRecord = {
-    id: string;
-    filename: string;
-    url: string;
-    originalName: string;
-    name?: string; // Display name
-    tags: string[];
-    folderId: string | null;
-    createdAt: number;
-    gifUrl?: string;
-};
-
-type FolderRecord = {
-    id: string;
-    name: string;
-    color?: string;
-};
-
-type DB = {
-    images: ImageRecord[];
-    folders: FolderRecord[];
-};
+import type { AppData as DB, ImageRecord, FolderRecord } from '@/lib/types';
 
 async function readDb(): Promise<DB> {
     await ensureDirs();
@@ -90,22 +62,53 @@ export async function getAppData() {
 
 export async function createFolder(name: string) {
     const db = await readDb();
-    const folder = { id: crypto.randomUUID(), name };
+    const folder: FolderRecord = { id: crypto.randomUUID(), name };
     db.folders.push(folder);
     await writeDb(db);
     revalidatePath('/');
     return folder;
 }
 
-export async function uploadImage(formData: FormData, folderId: string | null = null) {
-    const file = formData.get('file') as File;
-    const customName = formData.get('customName') as string;
+const ALLOWED_UPLOAD_TYPES: Record<string, string[]> = {
+    '.png': ['image/png'],
+    '.jpg': ['image/jpeg'],
+    '.jpeg': ['image/jpeg'],
+    '.jfif': ['image/jpeg', 'image/pjpeg'],
+    '.gif': ['image/gif'],
+    '.webp': ['image/webp'],
+};
+const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 
-    if (!file) throw new Error('No file uploaded');
+/** Checks the file's leading bytes, so a renamed HTML/SVG file can't be stored as an "image". */
+function hasImageSignature(buf: Buffer, ext: string): boolean {
+    const startsWith = (...bytes: number[]) => bytes.every((b, i) => buf[i] === b);
+    switch (ext) {
+        case '.png': return startsWith(0x89, 0x50, 0x4e, 0x47);
+        case '.jpg':
+        case '.jpeg':
+        case '.jfif': return startsWith(0xff, 0xd8, 0xff);
+        case '.gif': return startsWith(0x47, 0x49, 0x46, 0x38);
+        case '.webp': return startsWith(0x52, 0x49, 0x46, 0x46) && buf.subarray(8, 12).toString('ascii') === 'WEBP';
+        default: return false;
+    }
+}
+
+export async function uploadImage(formData: FormData, folderId: string | null = null) {
+    const file = formData.get('file');
+    const customName = formData.get('customName');
+
+    if (!(file instanceof File)) throw new Error('No file uploaded');
+
+    const ext = path.extname(file.name).toLowerCase();
+    const allowedMimes = ALLOWED_UPLOAD_TYPES[ext];
+    if (!allowedMimes) throw new Error('Only PNG, JPEG, GIF and WebP images can be uploaded');
+    if (file.type && !allowedMimes.includes(file.type)) throw new Error('File type does not match its extension');
+    if (file.size > MAX_UPLOAD_BYTES) throw new Error('Image is too large (max 20 MB)');
 
     const buffer = Buffer.from(await file.arrayBuffer());
+    if (!hasImageSignature(buffer, ext)) throw new Error('File is not a valid image');
+
     const id = crypto.randomUUID();
-    const ext = path.extname(file.name);
     const filename = `${id}${ext}`;
     const filepath = path.join(UPLOADS_DIR, filename);
 
@@ -113,36 +116,12 @@ export async function uploadImage(formData: FormData, folderId: string | null = 
     await fs.writeFile(filepath, buffer);
 
     const db = await readDb();
-    // Sort newest first by reversing the list (since they are read in alphabetical/date order usually, 
-    // or just reverse the result if relying on file system order which is roughly creation time for UUIDs? 
-    // Actually UUIDs aren't time ordered. But file system readdir isn't guaranteed order.
-    // Ideally we sort by mtime.
-
-    // Let's sort by mtime descending.
-    // This comment block seems to be misplaced here, as `uploadImage` adds a single image,
-    // it doesn't read a directory of images to sort.
-    // If the intent is to reverse the *entire* images array in the DB after adding a new one,
-    // that would be `db.images.reverse()`. However, this is usually done when *retrieving*
-    // images for display, not when storing them, as it would constantly reorder the entire DB.
-    // Assuming the instruction "Reverse image array" refers to the order of images in the DB
-    // after an upload, and that new images should appear first, we'll use `unshift`.
-    // If the intent was to reverse the array *after* it's been read for display,
-    // that would happen in `getAppData` or a similar retrieval function.
-    // Given the placement, we'll interpret it as affecting the storage order.
     const image: ImageRecord = {
         id,
         filename,
         url: `/uploads/${filename}`,
         originalName: file.name,
-        // Use custom name if provided, else filename logic or base name
-        // actually schema didn't have 'name' before, we rely on 'originalName' usually.
-        // Let's add 'name' property to record or just store it in originalName?
-        // Plan said "Update ImageRecord type to include name".
-        // Since Typescript types are runtime-erased here but good for consistency we should assume 'name' exists on the object.
-        // To match 'ImageCard' usage later we'll use 'name'.
-        // We add it to the object.
-        // @ts-ignore - straightforward addition
-        name: customName || file.name,
+        name: (typeof customName === 'string' && customName.trim()) || file.name,
         tags: [],
         folderId,
         createdAt: Date.now(),
@@ -174,7 +153,10 @@ export async function updateImageFolder(imageId: string, folderId: string | null
     }
 }
 
-export async function deleteImage(imageId: string) {
+export async function deleteImage(imageId: string, adminPassword: string) {
+    if (!passwordMatches(adminPassword)) {
+        return { success: false, error: 'Deleting images needs admin mode' };
+    }
     console.log(`[Delete] Request to delete imageId: ${imageId}`);
     const db = await readDb();
     const index = db.images.findIndex(i => i.id === imageId);
@@ -199,13 +181,12 @@ export async function deleteImage(imageId: string) {
                     console.error(`[Delete] Failed to delete GIF: ${e.message}`);
                 });
             }
-        } catch (e: any) {
-            console.error(`[Delete] CRITICAL ERROR removing file:`, e);
-            // If error is ENOENT (file not found), we should probably still remove from DB
-            // But if EACCES (permission), we need to know.
-            if (e.code !== 'ENOENT') {
-                // Return detailed error to UI
-                return { success: false, error: `${e.code}: ${e.message}` };
+        } catch (e) {
+            const err = e as NodeJS.ErrnoException;
+            console.error(`[Delete] Error removing file:`, err);
+            // A missing file is fine (still remove it from the DB); anything else (e.g. EACCES) is reported.
+            if (err.code !== 'ENOENT') {
+                return { success: false, error: `${err.code}: ${err.message}` };
             } else {
                 console.warn(`[Delete] File passed was not found, removing from DB anyway.`);
             }
@@ -221,38 +202,25 @@ export async function deleteImage(imageId: string) {
     }
 }
 
-export async function generateGifForImage(imageId: string) {
-    const db = await readDb();
-    const img = db.images.find(i => i.id === imageId);
-    if (!img) throw new Error('Image not found');
+// Set ADMIN_PASSWORD in the environment for any deployment; the fallback keeps local dev working.
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
+if (!process.env.ADMIN_PASSWORD && process.env.NODE_ENV === 'production') {
+    console.warn('[admin] ADMIN_PASSWORD is not set; using the built-in default password.');
+}
 
-    const inputPath = path.join(UPLOADS_DIR, img.filename);
-
-    // The generator runs locally.
-    try {
-        const outputPath = await generateGif(inputPath);
-        // Path returned is absolute. We need to make it relative to public or just filename.
-        // The generator saves as <filename>_1px_scroll.gif in same dir.
-
-        const gifFilename = path.basename(outputPath);
-        // Ensure it is in uploads dir (it should be)
-
-        img.gifUrl = `/uploads/${gifFilename}`;
-        await writeDb(db);
-        revalidatePath('/');
-        return img.gifUrl;
-    } catch (error) {
-        console.error("Gif gen failed", error);
-        throw error;
-    }
+function passwordMatches(candidate: unknown): boolean {
+    if (typeof candidate !== 'string') return false;
+    const a = Buffer.from(candidate);
+    const b = Buffer.from(ADMIN_PASSWORD);
+    return a.length === b.length && timingSafeEqual(a, b);
 }
 
 export async function checkAdminPassword(password: string) {
-    // Hardcoded for "Easter Egg" simplicity as requested
-    return password === 'admin123';
+    return passwordMatches(password);
 }
 
-export async function deleteFolder(folderId: string) {
+export async function deleteFolder(folderId: string, adminPassword: string) {
+    if (!passwordMatches(adminPassword)) throw new Error('Deleting folders needs admin mode');
     const db = await readDb();
 
     // 1. Move images to root (null)
@@ -271,27 +239,3 @@ export async function deleteFolder(folderId: string) {
     }
 }
 
-export async function sendImageToScreenAction(imageId: string, useGif = true) {
-    const db = await readDb();
-    const img = db.images.find(i => i.id === imageId);
-    if (!img) throw new Error('Image not found');
-
-    const filename = (useGif && img.gifUrl) ? path.basename(img.gifUrl) : img.filename;
-    const targetPath = path.join(UPLOADS_DIR, filename);
-
-    const { sendFileToScreen } = await import('@/lib/screenClient');
-    await sendFileToScreen(targetPath);
-    return { success: true };
-}
-
-export async function sendTextToScreenAction(text: string, color = '00FF00', bg = '000000', mode = 'auto', size = 14, speed = 50, step = 1) {
-    const { sendTextToScreen } = await import('@/lib/screenClient');
-    await sendTextToScreen(text, color, bg, mode, size, speed, step);
-    return { success: true };
-}
-
-export async function setBrightnessAction(level: number) {
-    const { setScreenBrightness } = await import('@/lib/screenClient');
-    await setScreenBrightness(level);
-    return { success: true };
-}

@@ -1,9 +1,5 @@
 FROM node:20-alpine
 
-# Install Python 3 and Pillow (Image processing library)
-# py3-pillow is the Alpine package for Pillow, pre-compiled (faster/easier than pip)
-RUN apk add --no-cache python3 py3-pillow
-
 WORKDIR /app
 
 # Install Node dependencies
@@ -23,7 +19,7 @@ RUN cp -r /app/public/uploads/* /migration/uploads/ || true
 # ----------------------------
 
 # Build Next.js app
-ENV NEXT_TELEMETRY_DISABLED 1
+ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
 # Expose port (Railway often uses 8080)
@@ -31,10 +27,6 @@ EXPOSE 8080
 ENV PORT=8080
 ENV STORAGE_PATH=/app/persistent
 
-# Start command:
-# Run-Once Logic Enhanced:
-# 1. Uploads: Always try to copy MISSING files (cp -rn) - Safe for merging.
-# 2. Database: If db.json is MISSING OR EMPTY (created by init), force overwrite with migration data.
 # Start command:
 # Run-Once Logic Enhanced:
 # 1. Uploads: Always try to copy MISSING files (cp -rn) - Safe for merging.

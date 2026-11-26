@@ -1,16 +1,17 @@
 {
-  "name": "iPixel LED Controller",
-  "short_name": "iPixel LED",
-  "description": "Offline BLE Controller & Scrolling GIF Generator for 96x16 LED Screen",
-  "start_url": "/offline.html",
+  "name": "Boogie Board",
+  "short_name": "Boogie Board",
+  "description": "Control the LED screen: playlists, pictures and text.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
   "display": "standalone",
-  "background_color": "#09090b",
-  "theme_color": "#a855f7",
+  "orientation": "portrait",
+  "background_color": "#161a2b",
+  "theme_color": "#161a2b",
   "icons": [
-    {
-      "src": "/icon.png",
-      "sizes": "192x192",
-      "type": "image/png"
-    }
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ]
 }

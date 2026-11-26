@@ -46,13 +46,7 @@ export function AddItemsDrawer({ open, onOpenChange, onAdd }: {
         close();
     };
 
-    const effectiveMode = picked.length < 2 && mode === 'strip' ? 'scroll' : mode;
-    const addLabel =
-        picked.length === 0
-            ? 'Choose pictures'
-            : effectiveMode === 'strip'
-              ? `Add as one scroll`
-              : `Add ${picked.length} picture${picked.length === 1 ? '' : 's'}`;
+    const addLabel = picked.length === 0 ? 'Choose pictures' : `Add ${picked.length} picture${picked.length === 1 ? '' : 's'}`;
 
     return (
         <Drawer open={open} onOpenChange={(o) => (o ? onOpenChange(true) : close())}>
@@ -117,12 +111,12 @@ export function AddItemsDrawer({ open, onOpenChange, onAdd }: {
                                 variant="outline"
                             >
                                 {PICTURE_MODES.map((m) => (
-                                    <ToggleGroupItem key={m.id} value={m.id} className="flex-1" disabled={m.id === 'strip' && picked.length < 2}>
+                                    <ToggleGroupItem key={m.id} value={m.id} className="flex-1">
                                         {m.label}
                                     </ToggleGroupItem>
                                 ))}
                             </ToggleGroup>
-                            <p className="text-sm text-muted-foreground">{PICTURE_MODES.find((m) => m.id === effectiveMode)?.hint}</p>
+                            <p className="text-sm text-muted-foreground">{PICTURE_MODES.find((m) => m.id === mode)?.hint}</p>
                         </div>
                     </TabsContent>
 

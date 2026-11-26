@@ -4,7 +4,6 @@ import { Play, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Drawer, DrawerContent, DrawerFooter, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
 import { Slider } from '@/components/ui/slider';
-import { Switch } from '@/components/ui/switch';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { LedItem } from '@/components/led/LedMatrix';
 import { MIN_ITEM_SECONDS, itemTitle, type PlaylistItem } from '@/lib/playlist/model';
@@ -53,16 +52,6 @@ export function ItemDrawer({ item, onChange, onRemove, onShowNow, onClose }: {
                                         onValueChange={(v) => onChange({ ...item, pxPerSecond: num(v) })}
                                     />
                                 </Row>
-                            )}
-
-                            {item.kind === 'scroll' && (
-                                <label className="flex items-center justify-between gap-4 text-sm">
-                                    <span>
-                                        Loop
-                                        <span className="block text-muted-foreground">Bottom flows back into the top, no pause</span>
-                                    </span>
-                                    <Switch checked={item.endless} onCheckedChange={(c) => onChange({ ...item, endless: c })} />
-                                </label>
                             )}
 
                             {item.kind === 'still' && (

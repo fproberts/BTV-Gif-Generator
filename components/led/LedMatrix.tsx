@@ -245,7 +245,7 @@ export function LedText({ text, animate = true, className }: { text: PortableStu
 export function LedItem({ item, animate = true, className }: { item: PlaylistItem; animate?: boolean; className?: string }) {
     switch (item.kind) {
         case 'scroll':
-            return <LedImage urls={[item.url]} mode={item.endless ? 'endless' : 'scroll'} pxPerSecond={item.pxPerSecond} animate={animate} className={className} label={item.name} />;
+            return <LedImage urls={[item.url]} mode="endless" pxPerSecond={item.pxPerSecond} animate={animate} className={className} label={item.name} />;
         case 'still':
             return <LedImage urls={[item.url]} mode="still" fit={item.fit} animate={false} className={className} label={item.name} />;
         case 'strip':

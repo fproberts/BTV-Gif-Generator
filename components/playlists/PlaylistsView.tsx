@@ -7,7 +7,7 @@ import { LedBlank, LedItem } from '@/components/led/LedMatrix';
 import { useScreen } from '@/components/app/useScreen';
 import { createPlaylist, type Playlist } from '@/lib/playlist/model';
 import { savePlaylist, usePlaylists, useSlotMap } from '@/lib/playlist/store';
-import { pendingUploads } from '@/lib/playlist/engine';
+import { useReadyPlaylists } from './useSendPlan';
 
 export function PlaylistsView({ onOpen }: { onOpen: (id: string) => void }) {
     const playlists = usePlaylists();
@@ -18,12 +18,7 @@ export function PlaylistsView({ onOpen }: { onOpen: (id: string) => void }) {
         () => [...playlists].sort((a, b) => Number(b.favourite) - Number(a.favourite) || b.updatedAt - a.updatedAt),
         [playlists],
     );
-    const onScreen = useMemo(() => {
-        const ready = new Set<string>();
-        for (const p of playlists) if (p.items.length && pendingUploads(p.items) === 0) ready.add(p.id);
-        return ready;
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [playlists, slotMap]);
+    const onScreen = useReadyPlaylists(playlists, slotMap);
 
     const create = () => {
         const p = createPlaylist(`Playlist ${playlists.length + 1}`);

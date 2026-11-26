@@ -200,7 +200,7 @@ function Chip({ active, onClick, children }: { active: boolean; onClick: () => v
 function PictureDrawer({ image, onClose }: { image: ImageRecord | null; onClose: () => void }) {
     const { data, setData, adminPassword } = useLibrary();
     const { play, busy } = useScreen();
-    const [mode, setMode] = useState<Exclude<PictureMode, 'strip'>>('scroll');
+    const [mode, setMode] = useState<PictureMode>('scroll');
     const [adding, setAdding] = useState(false);
 
     const items = () => (image ? itemsFromPictures([{ imageId: image.id, url: image.url, name: displayName(image) }], mode) : []);
@@ -233,7 +233,7 @@ function PictureDrawer({ image, onClose }: { image: ImageRecord | null; onClose:
                             <div className="space-y-4 overflow-y-auto px-4 pb-2">
                                 <LedImage
                                     urls={[image.url]}
-                                    mode={mode === 'endless' ? 'endless' : mode === 'still' ? 'still' : 'scroll'}
+                                    mode={mode === 'still' ? 'still' : 'endless'}
                                     label={displayName(image)}
                                 />
                                 <ToggleGroup
@@ -242,7 +242,7 @@ function PictureDrawer({ image, onClose }: { image: ImageRecord | null; onClose:
                                     value={[mode]}
                                     onValueChange={(v: unknown[]) => v[0] && setMode(v[0] as typeof mode)}
                                 >
-                                    {PICTURE_MODES.filter((m) => m.id !== 'strip').map((m) => (
+                                    {PICTURE_MODES.map((m) => (
                                         <ToggleGroupItem key={m.id} value={m.id} className="flex-1">{m.label}</ToggleGroupItem>
                                     ))}
                                 </ToggleGroup>

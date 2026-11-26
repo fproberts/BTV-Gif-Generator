@@ -4,6 +4,7 @@ import { useCallback, useState } from 'react';
 import { toast } from 'sonner';
 import { connectBLE, getBLEState, setBrightnessBLE, setClockBLE, useBLEState } from '@/lib/webBluetooth';
 import { playItems, type PlayProgress } from '@/lib/playlist/engine';
+import '@/lib/playlist/debug'; // console helpers for panel tests (window.__ipixel)
 import type { PlaylistItem } from '@/lib/playlist/model';
 
 function message(e: unknown): string {

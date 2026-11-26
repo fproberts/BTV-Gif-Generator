@@ -12,8 +12,10 @@ export interface ImageRef {
 }
 
 export type PlaylistItem =
-    | ({ id: string; kind: 'scroll'; pxPerSecond: number; endless: boolean } & ImageRef)
+    // `endless` is from older saved playlists and is ignored: pictures now flow into each other
+    | ({ id: string; kind: 'scroll'; pxPerSecond: number; endless?: boolean } & ImageRef)
     | ({ id: string; kind: 'still'; seconds: number; fit: 'cover' | 'contain' } & ImageRef)
+    // older saved playlists only: several pictures in one item, played like separate scroll items
     | { id: string; kind: 'strip'; images: ImageRef[]; pxPerSecond: number }
     | { id: string; kind: 'text'; name: string; text: PortableStudio };
 
@@ -42,7 +44,7 @@ export function newId(): string {
 function contentOf(item: PlaylistItem): unknown {
     switch (item.kind) {
         case 'scroll':
-            return ['scroll', item.url, item.pxPerSecond, item.endless];
+            return ['scroll', item.url, item.pxPerSecond];
         case 'still':
             return ['still', item.url, item.seconds, item.fit];
         case 'strip':
@@ -52,9 +54,14 @@ function contentOf(item: PlaylistItem): unknown {
     }
 }
 
-/** FNV-1a 64-bit-ish (two 32-bit lanes) over the JSON of the item's content. */
+/** What the item shows, as a short stable key (same content, same key). */
 export function itemKey(item: PlaylistItem): string {
-    const s = JSON.stringify(contentOf(item));
+    return contentKey(item.kind, contentOf(item));
+}
+
+/** FNV-1a 64-bit-ish (two 32-bit lanes) over the JSON of `value`. */
+export function contentKey(prefix: string, value: unknown): string {
+    const s = JSON.stringify(value);
     let h1 = 0x811c9dc5;
     let h2 = 0x01000193;
     for (let i = 0; i < s.length; i++) {
@@ -62,7 +69,7 @@ export function itemKey(item: PlaylistItem): string {
         h1 = Math.imul(h1 ^ c, 0x01000193);
         h2 = Math.imul(h2 ^ c, 0x5bd1e995);
     }
-    return `${item.kind}-${(h1 >>> 0).toString(16).padStart(8, '0')}${(h2 >>> 0).toString(16).padStart(8, '0')}`;
+    return `${prefix}-${(h1 >>> 0).toString(16).padStart(8, '0')}${(h2 >>> 0).toString(16).padStart(8, '0')}`;
 }
 
 export function itemTitle(item: PlaylistItem): string {
@@ -79,11 +86,11 @@ export function itemTitle(item: PlaylistItem): string {
 export function itemSummary(item: PlaylistItem): string {
     switch (item.kind) {
         case 'scroll':
-            return item.endless ? 'Endless scroll' : 'Scroll';
+            return 'Scroll';
         case 'still':
             return `Still, ${Math.max(MIN_ITEM_SECONDS, item.seconds)} s`;
         case 'strip':
-            return `Continuous scroll, ${item.images.length} pictures`;
+            return `Scroll, ${item.images.length} pictures`;
         case 'text':
             return 'Text';
     }
@@ -94,24 +101,25 @@ export function createPlaylist(name: string): Playlist {
     return { id: newId(), name: name.trim() || 'Untitled playlist', favourite: false, items: [], createdAt: now, updatedAt: now };
 }
 
-export type PictureMode = 'scroll' | 'endless' | 'still' | 'strip';
+export type PictureMode = 'scroll' | 'still';
 
 export const PICTURE_MODES: { id: PictureMode; label: string; hint: string }[] = [
-    { id: 'scroll', label: 'Scroll', hint: 'Top to bottom, then the next item' },
-    { id: 'endless', label: 'Loop', hint: 'Scrolls round and round with no pause' },
+    { id: 'scroll', label: 'Scroll', hint: 'Scrolls down and flows straight into the next picture' },
     { id: 'still', label: 'Still', hint: 'Fills the screen, no movement' },
-    { id: 'strip', label: 'Together', hint: 'All pictures in one continuous scroll' },
 ];
 
-/** Playlist items for a set of chosen pictures. 'strip' makes one item; the others make one per picture. */
+/** Playlist items for a set of chosen pictures, one per picture. */
 export function itemsFromPictures(pictures: ImageRef[], mode: PictureMode): PlaylistItem[] {
-    if (pictures.length === 0) return [];
-    if (mode === 'strip') return [{ id: newId(), kind: 'strip', images: pictures, pxPerSecond: DEFAULT_PX_PER_SECOND }];
     return pictures.map((p) =>
         mode === 'still'
             ? { id: newId(), kind: 'still', ...p, seconds: DEFAULT_STILL_SECONDS, fit: 'cover' as const }
-            : { id: newId(), kind: 'scroll', ...p, pxPerSecond: DEFAULT_PX_PER_SECOND, endless: mode === 'endless' },
+            : { id: newId(), kind: 'scroll', ...p, pxPerSecond: DEFAULT_PX_PER_SECOND },
     );
+}
+
+/** True when every item is a scrolling picture: the whole playlist becomes one endless scroll. */
+export function isPictureLoop(items: PlaylistItem[]): boolean {
+    return items.length > 0 && items.every((i) => i.kind === 'scroll' || i.kind === 'strip');
 }
 
 export function textItem(name: string, text: PortableStudio): PlaylistItem {

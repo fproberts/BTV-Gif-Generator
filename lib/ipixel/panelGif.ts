@@ -15,6 +15,12 @@ export const DEFAULT_COLOURS = 64;
 export const DEFAULT_SCROLL_PX_PER_SEC = 16;
 /** Observed: the panel keeps any playlist item up for about this long, even if its GIF is shorter. */
 export const PANEL_MIN_ITEM_MS = 6000;
+/** Pixels per frame for playlist scrolling: 2 halves the upload compared with 1, at the same speed. */
+export const FLOW_STEP_PX = 2;
+/** Shortest scroll chunk per slot, with a margin over PANEL_MIN_ITEM_MS. */
+export const FLOW_MIN_MS = 7000;
+/** Long pictures are cut every this many rows (120 frames at 2 px), well under the 250 frames tested. */
+export const FLOW_MAX_ROWS = 240;
 
 /** An RGB image exactly PANEL_WIDTH wide, `height` rows tall. */
 export interface RgbStrip {
@@ -81,6 +87,15 @@ export function buildScrollGif(strip: RgbStrip, opts: ScrollOptions = {}): Built
     if (!wrap && (opts.holdEndMs ?? 0) > 0) frames[frames.length - 1].delayMs += opts.holdEndMs!;
     const durationMs = frames.reduce((t, f) => t + f.delayMs, 0);
     return { bytes: encodeGif({ width: PANEL_WIDTH, height: PANEL_HEIGHT, palette, frames }), frames: frames.length, durationMs };
+}
+
+/** A GIF of chosen 16-row windows of a strip (one chunk of a continuous scroll, see lib/playlist/flow.ts). */
+export function buildFramesGif(strip: RgbStrip, frames: { top: number; delayMs: number }[], colours = DEFAULT_COLOURS): BuiltGif {
+    if (!frames.length) throw new Error('No frames');
+    const { palette, indices } = indexedStrip(strip, colours);
+    const gifFrames = frames.map((f) => ({ indices: cropRows(indices, strip.height, f.top, false), delayMs: f.delayMs }));
+    const durationMs = frames.reduce((t, f) => t + f.delayMs, 0);
+    return { bytes: encodeGif({ width: PANEL_WIDTH, height: PANEL_HEIGHT, palette, frames: gifFrames }), frames: frames.length, durationMs };
 }
 
 /** A still 96x16 picture shown for `seconds` (the panel's ~6 s minimum still applies). */

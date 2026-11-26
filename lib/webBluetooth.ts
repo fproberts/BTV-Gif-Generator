@@ -242,11 +242,26 @@ export async function sendRawCommandBLE(bytes: Uint8Array): Promise<void> {
     console.log(`⚡ [BLE Debug] Sent chunk batch: ${bytes.length} bytes (${chunksSent} chunks) in ${(tEnd - tStart).toFixed(0)} ms (~${speedKBps} KB/s)`);
 }
 
+const SEND_GAP_KEY = 'bb.sendGap';
+const DEFAULT_SEND_GAP_MS = 10;
+
+/** Pause between Bluetooth writes. 10 ms is proven; a smaller gap can be tried with __ipixel.setSendGap(ms). */
+function sendGapMs(): number {
+    try {
+        const v = Number(window.localStorage.getItem(SEND_GAP_KEY));
+        return window.localStorage.getItem(SEND_GAP_KEY) !== null && Number.isFinite(v) && v >= 0 ? v : DEFAULT_SEND_GAP_MS;
+    } catch {
+        return DEFAULT_SEND_GAP_MS;
+    }
+}
+
 /** Defaults for image/GIF transfers, following the app (REA findings section 5.2). */
 export const MEDIA_SEND_DEFAULTS = {
     mtu: SAFE_WRITE_SIZE,
     writeMode: 'auto' as WriteMode,
-    interChunkDelayMs: 10,
+    get interChunkDelayMs() {
+        return sendGapMs();
+    },
     ackTimeoutMs: 6000,
     requireAck: true,
     maxRetries: 3,
@@ -493,6 +508,41 @@ export async function sendCommandAwaitReply(bytes: Uint8Array, opcode: number, t
     return reply;
 }
 
+/**
+ * Ask the panel how much storage is left: `04 00 02 80` -> `09 00 02 80 b4 b5 b6 b7 b8` (REA 6.1).
+ * The app never calls this, and the 96x16 panel did not answer it (Nov 2026); kept for other firmware.
+ */
+export async function getRemainingSpaceBLE(timeoutMs = 4000): Promise<{ hex: string; le: number | null; be: number | null }> {
+    let off: () => void = () => {};
+    const reply = new Promise<Uint8Array>((resolve, reject) => {
+        const timer = setTimeout(() => { off(); reject(new Error(`No space reply within ${timeoutMs} ms`)); }, timeoutMs);
+        off = onBLENotify((raw) => {
+            if (raw.length < 5 || raw[2] !== 0x02 || raw[3] !== 0x80) return;
+            clearTimeout(timer);
+            off();
+            resolve(raw);
+        });
+    });
+    await sendRawCommandBLE(new Uint8Array([0x04, 0x00, 0x02, 0x80]));
+    const raw = await reply;
+    const hex = [...raw].map((b) => b.toString(16).padStart(2, '0')).join(' ');
+    const ok = raw.length >= 9;
+    return {
+        hex,
+        le: ok ? (raw[5] | (raw[6] << 8) | (raw[7] << 16) | (raw[8] << 24)) >>> 0 : null,
+        be: ok ? ((raw[5] << 24) | (raw[6] << 16) | (raw[7] << 8) | raw[8]) >>> 0 : null,
+    };
+}
+
+/** Screen on/off (`05 00 07 01 <0|1>`); the reply, if any, is not required. */
+export async function setPowerBLE(on: boolean): Promise<void> {
+    try {
+        await sendCommandAwaitReply(new Uint8Array([0x05, 0x00, 0x07, 0x01, on ? 1 : 0]), 0x0107, 1500);
+    } catch {
+        /* no reply: fine */
+    }
+}
+
 /** Tell the panel which slots to play, in order. The app treats a non-zero reply as success. */
 export async function setProgramListBLE(slots: number[]): Promise<number> {
     const status = await sendCommandAwaitReply(buildSetProgramList(slots), PROGRAM_LIST_OPCODE_U16);
@@ -501,7 +551,7 @@ export async function setProgramListBLE(slots: number[]): Promise<number> {
     return status;
 }
 
-/** Delete stored slots. Which reply status means success is not known yet, so it is returned as-is. */
+/** Delete stored slots; frees their storage. Reply status 1 = success (confirmed on hardware). */
 export async function deleteSlotsBLE(slots: number[]): Promise<number> {
     const status = await sendCommandAwaitReply(buildDeleteSlots(slots), DELETE_SLOTS_OPCODE_U16);
     console.log(`🗑️ [BLE Debug] Delete slots [${slots.join(', ')}] -> status ${status}`);
@@ -547,7 +597,10 @@ if (typeof window !== 'undefined') {
         const isGif = bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46;
         return { kind: isGif ? 'gif' : 'image', bytes };
     };
-    (window as unknown as { __ipixel: unknown }).__ipixel = {
+    // merge: lib/playlist/debug.ts adds its own helpers to the same object
+    const w = window as unknown as { __ipixel?: Record<string, unknown> };
+    w.__ipixel = {
+        ...(w.__ipixel ?? {}),
         setProgramList: setProgramListBLE,
         deleteSlots: deleteSlotsBLE,
         deleteAll: deleteAllSlotsBLE,
@@ -580,6 +633,12 @@ if (typeof window !== 'undefined') {
             return uploadPlaylistBLE(items);
         },
         state: getBLEState,
+        /** Try a different pause between writes (ms); null goes back to the proven 10 ms. Kept on this phone. */
+        setSendGap: (ms: number | null) => {
+            if (ms === null) window.localStorage.removeItem(SEND_GAP_KEY);
+            else window.localStorage.setItem(SEND_GAP_KEY, String(ms));
+            return sendGapMs();
+        },
     };
 }
 

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ArrowDown, ArrowLeft, ArrowUp, Copy, Ellipsis, Loader2, Play, Plus, Star, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -14,7 +14,7 @@ import { AddItemsDrawer } from './AddItemsDrawer';
 import { ItemDrawer } from './ItemDrawer';
 import { createPlaylist, itemSummary, itemTitle, newId, type Playlist, type PlaylistItem } from '@/lib/playlist/model';
 import { deletePlaylist, savePlaylist, useSlotMap } from '@/lib/playlist/store';
-import { pendingUploads } from '@/lib/playlist/engine';
+import { formatSendTime, useSendEstimate } from './useSendPlan';
 
 export function PlaylistEditor({ playlist, onBack }: { playlist: Playlist; onBack: () => void }) {
     const [draft, setDraft] = useState(playlist);
@@ -41,16 +41,15 @@ export function PlaylistEditor({ playlist, onBack }: { playlist: Playlist; onBac
         });
 
     const editingItem = draft.items.find((it) => it.id === editing) ?? null;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    const toSend = useMemo(() => pendingUploads(draft.items), [draft.items, slotMap]);
+    const estimate = useSendEstimate(draft.items, slotMap);
 
     const playLabel = !ble.connected
         ? 'Connect and play'
-        : draft.items.length === 0
+        : draft.items.length === 0 || !estimate
           ? 'Play'
-          : toSend === 0
+          : estimate.pending === 0
             ? 'Play now'
-            : `Play (send ${toSend} item${toSend === 1 ? '' : 's'})`;
+            : `Play (about ${formatSendTime(estimate.seconds)} to send)`;
 
     return (
         <div className="flex min-h-[calc(100dvh-3.5rem)] flex-col">

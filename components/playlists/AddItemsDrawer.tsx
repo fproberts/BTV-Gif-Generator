@@ -67,19 +67,21 @@ export function AddItemsDrawer({ open, onOpenChange, onAdd }: {
                     </TabsList>
 
                     <TabsContent value="pictures" className="flex min-h-0 flex-col gap-3 pt-3">
-                        <div className="relative">
+                        <div className="relative shrink-0">
                             <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
                             <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search pictures" className="h-10 pl-9" />
                         </div>
                         {data.folders.length > 0 && (
-                            <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1">
+                            <div className="-mx-4 flex shrink-0 gap-2 overflow-x-auto px-4 pb-1">
                                 <FolderChip active={folder === null} onClick={() => setFolder(null)}>All</FolderChip>
                                 {data.folders.map((f) => (
                                     <FolderChip key={f.id} active={folder === f.id} onClick={() => setFolder(f.id)}>{f.name}</FolderChip>
                                 ))}
                             </div>
                         )}
-                        <div className="grid max-h-[42dvh] grid-cols-3 gap-2 overflow-y-auto sm:grid-cols-4">
+                        {/* the wrapper scrolls; the grid inside keeps natural row heights (a squeezed grid makes square tiles overlap) */}
+                        <div className="max-h-[42dvh] min-h-32 flex-1 overflow-y-auto overscroll-contain">
+                        <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
                             {shown.map((img) => {
                                 const order = picked.indexOf(img.id);
                                 return (
@@ -106,7 +108,8 @@ export function AddItemsDrawer({ open, onOpenChange, onAdd }: {
                             })}
                             {shown.length === 0 && <p className="col-span-full py-8 text-center text-sm text-muted-foreground">No pictures match.</p>}
                         </div>
-                        <div className="space-y-2">
+                        </div>
+                        <div className="shrink-0 space-y-2">
                             <ToggleGroup
                                 value={[mode]}
                                 onValueChange={(v: unknown[]) => v[0] && setMode(v[0] as PictureMode)}

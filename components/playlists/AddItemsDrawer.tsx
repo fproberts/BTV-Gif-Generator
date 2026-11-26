@@ -50,7 +50,8 @@ export function AddItemsDrawer({ open, onOpenChange, onAdd }: {
 
     return (
         <Drawer open={open} onOpenChange={(o) => (o ? onOpenChange(true) : close())}>
-            <DrawerContent className="mx-auto max-w-2xl">
+            {/* nearly full screen: picking pictures needs room */}
+            <DrawerContent className="mx-auto max-w-2xl [--drawer-content-height:calc(100dvh-2rem)] data-[swipe-axis=y]:[--drawer-content-max-height:calc(100dvh-2rem)]">
                 <DrawerHeader className="pb-2">
                     <DrawerTitle>Add to playlist</DrawerTitle>
                 </DrawerHeader>
@@ -74,7 +75,7 @@ export function AddItemsDrawer({ open, onOpenChange, onAdd }: {
                             </div>
                         )}
                         {/* the wrapper scrolls; the grid inside keeps natural row heights (a squeezed grid makes square tiles overlap) */}
-                        <div className="max-h-[42dvh] min-h-32 flex-1 overflow-y-auto overscroll-contain">
+                        <div className="min-h-32 flex-1 overflow-y-auto overscroll-contain">
                         <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
                             {shown.map((img) => {
                                 const order = picked.indexOf(img.id);
@@ -120,8 +121,8 @@ export function AddItemsDrawer({ open, onOpenChange, onAdd }: {
                         </div>
                     </TabsContent>
 
-                    <TabsContent value="text" className="pt-3">
-                        <div className="max-h-[55dvh] space-y-2 overflow-y-auto">
+                    <TabsContent value="text" className="min-h-0 overflow-y-auto overscroll-contain pt-3 pb-4">
+                        <div className="space-y-2">
                             {texts.length === 0 && (
                                 <p className="py-8 text-center text-sm text-muted-foreground">Save a text on the Text tab to add it here.</p>
                             )}
